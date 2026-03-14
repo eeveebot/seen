@@ -17,6 +17,9 @@ const seenCommandDisplayName = 'seen';
 const sinceCommandUUID = 'f0e9d8c7-b6a5-4321-fedc-ba9876543210';
 const sinceCommandDisplayName = 'since';
 
+const seenBroadcastUUID = 'c3d4e5f6-7890-abcd-ef12-34567890abcd';
+const seenBroadcastDisplayName = 'seen';
+
 // Rate limit configuration interface
 interface RateLimitConfig {
   mode: 'enqueue' | 'drop';
@@ -275,6 +278,40 @@ async function registerSinceCommand(): Promise<void> {
   }
 }
 
+// Function to register the seen broadcast with the router
+async function registerSeenBroadcast(): Promise<void> {
+  const broadcastRegistration = {
+    type: 'broadcast.register',
+    broadcastUUID: seenBroadcastUUID,
+    broadcastDisplayName: seenBroadcastDisplayName,
+    platform: '.*', // Match all platforms
+    network: '.*', // Match all networks
+    instance: '.*', // Match all instances
+    channel: '.*', // Match all channels
+    user: '.*', // Match all users
+    messageFilterRegex: '.*', // Match all messages
+    ttl: 120000, // 2 minutes TTL
+  };
+
+  try {
+    await nats.publish(
+      'broadcast.register',
+      JSON.stringify(broadcastRegistration)
+    );
+    log.info('Registered seen broadcast with router', {
+      producer: 'seen',
+    });
+  } catch (error) {
+    log.error('Failed to register seen broadcast', {
+      producer: 'seen',
+      error: error,
+    });
+  }
+}
+
+// Register broadcast at startup
+await registerSeenBroadcast();
+
 // Register commands at startup
 await registerSeenCommand();
 await registerSinceCommand();
@@ -417,13 +454,15 @@ const sinceCommandSub = nats.subscribe(
       const sinceTime = Date.now() - lookbackMinutes * 60000;
 
       // Find users seen since the specified time
-      const users = findUsersSinceStmt.all({ sinceTime }) as Array<{ nick: string }>;
+      const users = findUsersSinceStmt.all({ sinceTime }) as Array<{
+        nick: string;
+      }>;
 
       let responseText = '';
       if (users.length === 0) {
         responseText = `${data.user}: I haven't seen anyone yet`;
       } else {
-        const userList = users.map(u => u.nick).join(', ');
+        const userList = users.map((u) => u.nick).join(', ');
         responseText = `${data.user}: In the last ${lookbackMinutes} minutes, I've seen: ${userList}`;
       }
 
@@ -449,13 +488,13 @@ const sinceCommandSub = nats.subscribe(
 );
 natsSubscriptions.push(sinceCommandSub);
 
-// Subscribe to incoming messages to track user activity
-const incomingMessageSub = nats.subscribe(
-  'chat.message.incoming.*.*.*',
+// Subscribe to broadcast messages to track user activity
+const seenBroadcastSub = nats.subscribe(
+  `broadcast.message.${seenBroadcastUUID}`,
   (subject, message) => {
     try {
       const data = JSON.parse(message.string());
-      log.debug('Received incoming message for seen tracking', {
+      log.debug('Received broadcast.message for seen tracking', {
         producer: 'seen',
         platform: data.platform,
         instance: data.instance,
@@ -478,14 +517,14 @@ const incomingMessageSub = nats.subscribe(
       };
       updateSinceUserStmt.run(sinceData);
     } catch (error) {
-      log.error('Failed to process incoming message for seen tracking', {
+      log.error('Failed to process broadcast message for seen tracking', {
         producer: 'seen',
         error: error,
       });
     }
   }
 );
-natsSubscriptions.push(incomingMessageSub);
+natsSubscriptions.push(seenBroadcastSub);
 
 // Subscribe to control messages for re-registering commands
 const controlSubRegisterCommandSeen = nats.subscribe(
@@ -527,6 +566,32 @@ const controlSubRegisterCommandAll = nats.subscribe(
   }
 );
 natsSubscriptions.push(controlSubRegisterCommandAll);
+
+// Subscribe to control messages for re-registering broadcasts
+const controlSubRegisterBroadcastSeen = nats.subscribe(
+  `control.registerBroadcasts.${seenBroadcastDisplayName}`,
+  () => {
+    log.info(
+      `Received control.registerBroadcasts.${seenBroadcastDisplayName} control message`,
+      {
+        producer: 'seen',
+      }
+    );
+    void registerSeenBroadcast();
+  }
+);
+natsSubscriptions.push(controlSubRegisterBroadcastSeen);
+
+const controlSubRegisterBroadcastAll = nats.subscribe(
+  'control.registerBroadcasts',
+  () => {
+    log.info('Received control.registerBroadcasts control message', {
+      producer: 'seen',
+    });
+    void registerSeenBroadcast();
+  }
+);
+natsSubscriptions.push(controlSubRegisterBroadcastAll);
 
 // Subscribe to stats.uptime messages and respond with module uptime
 const statsUptimeSub = nats.subscribe('stats.uptime', (subject, message) => {
