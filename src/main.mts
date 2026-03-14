@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import yaml from 'js-yaml';
 import { NatsClient, log } from '@eeveebot/libeevee';
 import Database from 'better-sqlite3';
+import { colorizeSeen } from './utils/colorize.mjs';
 
 // Record module startup time for uptime tracking
 const moduleStartTime = Date.now();
@@ -334,12 +335,14 @@ const seenCommandSub = nats.subscribe(
       // Parse the command: seen <username>
       const parts = data.text.trim().split(/\s+/);
       if (parts.length < 1) {
+        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const usageText = colorizeSeen('Usage: seen <username>', data.platform, 'warning');
         const errorMsg = {
           channel: data.channel,
           network: data.network,
           instance: data.instance,
           platform: data.platform,
-          text: `${data.user}: Usage: seen <username>`,
+          text: `${userText}: ${usageText}`,
           trace: data.trace,
           type: 'message.outgoing',
         };
@@ -365,12 +368,16 @@ const seenCommandSub = nats.subscribe(
       });
 
       if (!userData) {
+        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const targetUserText = colorizeSeen(targetUser, data.platform, 'warning');
+        const responseText = colorizeSeen(`I haven't seen ${targetUserText} yet`, data.platform, 'info');
+        
         const response = {
           channel: data.channel,
           network: data.network,
           instance: data.instance,
           platform: data.platform,
-          text: `${data.user}: I haven't seen ${targetUser} yet`,
+          text: `${userText}: ${responseText}`,
           trace: data.trace,
           type: 'message.outgoing',
         };
@@ -402,13 +409,19 @@ const seenCommandSub = nats.subscribe(
       
       const displayDate = date.toISOString().substring(0, 10);
       const displayTime = date.toISOString().substring(11, 16);
+      
+      // Colorize different parts of the response
+      const userText = colorizeSeen(data.user, data.platform, 'user');
+      const targetUserText = colorizeSeen(targetUser, data.platform, 'user');
+      const dateTimeText = colorizeSeen(`${displayDate} ${displayTime}`, data.platform, 'date');
+      const actionText = colorizeSeen(userData.text, data.platform, 'action');
 
       const response = {
         channel: data.channel,
         network: data.network,
         instance: data.instance,
         platform: data.platform,
-        text: `${data.user}: [${targetUser}] [${displayDate} ${displayTime}] [${userData.text}]`,
+        text: `${userText}: [${targetUserText}] [${dateTimeText}] [${actionText}]`,
         trace: data.trace,
         type: 'message.outgoing',
       };
@@ -444,12 +457,14 @@ const sinceCommandSub = nats.subscribe(
       // Parse the command: since <minutes>
       const parts = data.text.trim().split(/\s+/);
       if (parts.length < 1) {
+        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const usageText = colorizeSeen('Usage: since <minutes>', data.platform, 'warning');
         const errorMsg = {
           channel: data.channel,
           network: data.network,
           instance: data.instance,
           platform: data.platform,
-          text: `${data.user}: Usage: since <minutes>`,
+          text: `${userText}: ${usageText}`,
           trace: data.trace,
           type: 'message.outgoing',
         };
@@ -461,12 +476,14 @@ const sinceCommandSub = nats.subscribe(
 
       const minutes = parseInt(parts[0]);
       if (isNaN(minutes)) {
+        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const errorText = colorizeSeen('Please provide a valid number of minutes', data.platform, 'warning');
         const errorMsg = {
           channel: data.channel,
           network: data.network,
           instance: data.instance,
           platform: data.platform,
-          text: `${data.user}: Please provide a valid number of minutes`,
+          text: `${userText}: ${errorText}`,
           trace: data.trace,
           type: 'message.outgoing',
         };
@@ -485,12 +502,18 @@ const sinceCommandSub = nats.subscribe(
         nick: string;
       }>;
 
+      // Colorize the response
+      const userText = colorizeSeen(data.user, data.platform, 'user');
       let responseText = '';
+      
       if (users.length === 0) {
-        responseText = `${data.user}: I haven't seen anyone yet`;
+        const infoText = colorizeSeen("I haven't seen anyone yet", data.platform, 'info');
+        responseText = `${userText}: ${infoText}`;
       } else {
-        const userList = users.map((u) => u.nick).join(', ');
-        responseText = `${data.user}: In the last ${lookbackMinutes} minutes, I've seen: ${userList}`;
+        const minutesText = colorizeSeen(lookbackMinutes.toString(), data.platform, 'date');
+        const userList = users.map((u) => colorizeSeen(u.nick, data.platform, 'user')).join(', ');
+        const infoText = colorizeSeen(`In the last ${minutesText} minutes, I've seen:`, data.platform, 'info');
+        responseText = `${userText}: ${infoText} ${userList}`;
       }
 
       const response = {
