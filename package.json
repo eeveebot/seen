@@ -1,0 +1,31 @@
+{
+  "name": "@eeveebot/seen",
+  "version": "2.2.8",
+  "description": "seen module for eevee.bot",
+  "main": "dist/main.mjs",
+  "type": "module",
+  "scripts": {
+    "build": "npm run test && tsc",
+    "dev": "tsc --watch & node --loader ts-node/esm src/main.mts",
+    "test": "eslint src/",
+    "update-libraries": "ncu -u @eeveebot/libeevee js-yaml undici && npm install"
+  },
+  "dependencies": {
+    "@eeveebot/libeevee": "^3.3.1",
+    "irc-colors": "^1.5.0",
+    "js-yaml": "^4.1.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@types/js-yaml": "^4.0.5",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "eslint": "^8.0.0",
+    "globals": "^17.4.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
