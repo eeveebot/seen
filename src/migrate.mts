@@ -69,12 +69,27 @@ async function migrateDatabase(
       }
     });
 
-    // Transform and insert records (no transformation needed as schemas are compatible)
-    const newRecords: NewSeenRecord[] = oldRecords.map((record) => ({
-      nick: record.nick,
-      date: record.date,
-      text: record.text,
-    }));
+    // Transform and insert records (convert timestamp to ISO date string)
+    const newRecords: NewSeenRecord[] = oldRecords.map((record) => {
+      // Convert old timestamp format (milliseconds with .0 suffix) to ISO date string
+      let isoDate = record.date;
+      try {
+        // Remove .0 suffix and parse as integer
+        const timestampStr = record.date.replace('.0', '');
+        const timestamp = parseInt(timestampStr, 10);
+        if (!isNaN(timestamp)) {
+          isoDate = new Date(timestamp).toISOString();
+        }
+      } catch (error) {
+        console.warn(`Failed to convert timestamp for user ${record.nick}: ${record.date}`, error);
+      }
+      
+      return {
+        nick: record.nick,
+        date: isoDate,
+        text: record.text,
+      };
+    });
 
     // Insert all records in a transaction
     insertTransaction(newRecords);

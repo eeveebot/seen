@@ -385,7 +385,21 @@ const seenCommandSub = nats.subscribe(
         producer: 'seen',
         dateValue: userData.date,
       });
-      const date = new Date(userData.date);
+      
+      let date: Date;
+      try {
+        date = new Date(userData.date);
+        if (isNaN(date.getTime())) {
+          throw new Error('Invalid date');
+        }
+      } catch {
+        log.warn('Invalid date format in database, using current date', {
+          producer: 'seen',
+          storedDate: userData.date,
+        });
+        date = new Date();
+      }
+      
       const displayDate = date.toISOString().substring(0, 10);
       const displayTime = date.toISOString().substring(11, 16);
 
