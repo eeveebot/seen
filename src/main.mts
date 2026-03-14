@@ -352,9 +352,17 @@ const seenCommandSub = nats.subscribe(
       const targetUser = parts[0].toLowerCase();
 
       // Find user in database
+      log.debug('Searching for user in database', {
+        producer: 'seen',
+        targetUser,
+      });
       const userData = findUserStmt.get({ nick: targetUser }) as
         | { date: string; text: string }
         | undefined;
+      log.debug('Database query result', {
+        producer: 'seen',
+        userData,
+      });
 
       if (!userData) {
         const response = {
@@ -373,6 +381,10 @@ const seenCommandSub = nats.subscribe(
       }
 
       // Format the date
+      log.debug('Formatting date', {
+        producer: 'seen',
+        dateValue: userData.date,
+      });
       const date = new Date(userData.date);
       const displayDate = date.toISOString().substring(0, 10);
       const displayTime = date.toISOString().substring(11, 16);
@@ -392,7 +404,8 @@ const seenCommandSub = nats.subscribe(
     } catch (error) {
       log.error('Failed to process seen command', {
         producer: 'seen',
-        error: error,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     }
   }
