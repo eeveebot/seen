@@ -7,7 +7,7 @@ declare module 'irc-colors' {
   export function red(text: string): string;
   export function purple(text: string): string;
   export function gray(text: string): string;
-  
+
   export default {
     blue,
     cyan,

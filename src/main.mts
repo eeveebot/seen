@@ -336,7 +336,11 @@ const seenCommandSub = nats.subscribe(
       const parts = data.text.trim().split(/\s+/);
       if (parts.length < 1) {
         const userText = colorizeSeen(data.user, data.platform, 'user');
-        const usageText = colorizeSeen('Usage: seen <username>', data.platform, 'warning');
+        const usageText = colorizeSeen(
+          'Usage: seen <username>',
+          data.platform,
+          'warning'
+        );
         const errorMsg = {
           channel: data.channel,
           network: data.network,
@@ -369,9 +373,17 @@ const seenCommandSub = nats.subscribe(
 
       if (!userData) {
         const userText = colorizeSeen(data.user, data.platform, 'user');
-        const targetUserText = colorizeSeen(targetUser, data.platform, 'warning');
-        const responseText = colorizeSeen(`I haven't seen ${targetUserText} yet`, data.platform, 'info');
-        
+        const targetUserText = colorizeSeen(
+          targetUser,
+          data.platform,
+          'warning'
+        );
+        const responseText = colorizeSeen(
+          `I haven't seen ${targetUserText} yet`,
+          data.platform,
+          'info'
+        );
+
         const response = {
           channel: data.channel,
           network: data.network,
@@ -392,7 +404,7 @@ const seenCommandSub = nats.subscribe(
         producer: 'seen',
         dateValue: userData.date,
       });
-      
+
       let date: Date;
       try {
         date = new Date(userData.date);
@@ -406,14 +418,18 @@ const seenCommandSub = nats.subscribe(
         });
         date = new Date();
       }
-      
+
       const displayDate = date.toISOString().substring(0, 10);
       const displayTime = date.toISOString().substring(11, 16);
-      
+
       // Colorize different parts of the response
       const userText = colorizeSeen(data.user, data.platform, 'user');
       const targetUserText = colorizeSeen(targetUser, data.platform, 'user');
-      const dateTimeText = colorizeSeen(`${displayDate} ${displayTime}`, data.platform, 'date');
+      const dateTimeText = colorizeSeen(
+        `${displayDate} ${displayTime}`,
+        data.platform,
+        'date'
+      );
       const actionText = colorizeSeen(userData.text, data.platform, 'action');
 
       const response = {
@@ -458,7 +474,11 @@ const sinceCommandSub = nats.subscribe(
       const parts = data.text.trim().split(/\s+/);
       if (parts.length < 1) {
         const userText = colorizeSeen(data.user, data.platform, 'user');
-        const usageText = colorizeSeen('Usage: since <minutes>', data.platform, 'warning');
+        const usageText = colorizeSeen(
+          'Usage: since <minutes>',
+          data.platform,
+          'warning'
+        );
         const errorMsg = {
           channel: data.channel,
           network: data.network,
@@ -477,7 +497,11 @@ const sinceCommandSub = nats.subscribe(
       const minutes = parseInt(parts[0]);
       if (isNaN(minutes)) {
         const userText = colorizeSeen(data.user, data.platform, 'user');
-        const errorText = colorizeSeen('Please provide a valid number of minutes', data.platform, 'warning');
+        const errorText = colorizeSeen(
+          'Please provide a valid number of minutes',
+          data.platform,
+          'warning'
+        );
         const errorMsg = {
           channel: data.channel,
           network: data.network,
@@ -505,14 +529,28 @@ const sinceCommandSub = nats.subscribe(
       // Colorize the response
       const userText = colorizeSeen(data.user, data.platform, 'user');
       let responseText = '';
-      
+
       if (users.length === 0) {
-        const infoText = colorizeSeen("I haven't seen anyone yet", data.platform, 'info');
+        const infoText = colorizeSeen(
+          "I haven't seen anyone yet",
+          data.platform,
+          'info'
+        );
         responseText = `${userText}: ${infoText}`;
       } else {
-        const minutesText = colorizeSeen(lookbackMinutes.toString(), data.platform, 'date');
-        const userList = users.map((u) => colorizeSeen(u.nick, data.platform, 'user')).join(', ');
-        const infoText = colorizeSeen(`In the last ${minutesText} minutes, I've seen:`, data.platform, 'info');
+        const minutesText = colorizeSeen(
+          lookbackMinutes.toString(),
+          data.platform,
+          'date'
+        );
+        const userList = users
+          .map((u) => colorizeSeen(u.nick, data.platform, 'user'))
+          .join(', ');
+        const infoText = colorizeSeen(
+          `In the last ${minutesText} minutes, I've seen:`,
+          data.platform,
+          'info'
+        );
         responseText = `${userText}: ${infoText} ${userList}`;
       }
 

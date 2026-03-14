@@ -81,9 +81,12 @@ async function migrateDatabase(
           isoDate = new Date(timestamp).toISOString();
         }
       } catch (error) {
-        console.warn(`Failed to convert timestamp for user ${record.nick}: ${record.date}`, error);
+        console.warn(
+          `Failed to convert timestamp for user ${record.nick}: ${record.date}`,
+          error
+        );
       }
-      
+
       return {
         nick: record.nick,
         date: isoDate,
