@@ -11,13 +11,13 @@ import Database from 'better-sqlite3';
 // Record module startup time for uptime tracking
 const moduleStartTime = Date.now();
 
-const seenCommandUUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const seenCommandUUID = '6ea5d8c9-17e7-4348-b205-43d88ddfe0bf';
 const seenCommandDisplayName = 'seen';
 
-const sinceCommandUUID = 'f0e9d8c7-b6a5-4321-fedc-ba9876543210';
+const sinceCommandUUID = 'eec16230-25ac-4c6b-84fd-feacf7753c7d';
 const sinceCommandDisplayName = 'since';
 
-const seenBroadcastUUID = 'c3d4e5f6-7890-abcd-ef12-34567890abcd';
+const seenBroadcastUUID = 'd3a0ee0a-32e3-4613-bcdd-736c52e38e81';
 const seenBroadcastDisplayName = 'seen';
 
 // Rate limit configuration interface
