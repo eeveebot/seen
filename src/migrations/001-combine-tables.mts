@@ -53,14 +53,32 @@ async function runMigration(dbPath: string): Promise<void> {
     // Step 2: Copy data from since_users to seen_users
     console.log('Migrating data from since_users to seen_users...');
     
-    // Since we don't have the platform/network/instance/channel data in since_users,
-    // we'll leave those fields as NULL for now. In a real scenario, this data would
-    // need to be obtained from another source or populated when users are next seen.
+    // Check if since_users table exists before attempting to migrate data
+    const sinceTableExists = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='since_users';
+    `).get();
     
-    // Update the date_seen column name to match the new schema
-    // Actually, we'll keep both pieces of information but store them separately
-    
-    // Step 3: Create indexes for better performance
+    if (sinceTableExists) {
+      // Transfer all data from since_users to seen_users
+      // Since we don't have the platform/network/instance/channel data in since_users,
+      // we'll use placeholder values that can be updated when users are next seen
+      const rowCount = db.prepare(`
+        SELECT COUNT(*) as count FROM since_users;
+      `).get() as { count: number };
+      
+      console.log(`Found ${rowCount.count} records in since_users to migrate`);
+      
+      db.exec(`
+        INSERT INTO seen_users (nick, date, text, platform, network, instance, channel)
+        SELECT nick, date, text, 'irc', 'unknown', 'unknown', 'unknown'
+        FROM since_users
+        WHERE nick IS NOT NULL;
+      `);
+      
+      console.log('Data migration completed');
+    } else {
+      console.log('since_users table not found, skipping data migration');
+    }
     console.log('Creating indexes...');
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_seen_users_platform 
@@ -81,6 +99,12 @@ async function runMigration(dbPath: string): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_seen_users_channel 
       ON seen_users(channel);
     `);
+    
+    // Step 4: Drop the old since_users table since we've migrated all data
+    if (sinceTableExists) {
+      console.log('Dropping old since_users table...');
+      db.exec('DROP TABLE IF EXISTS since_users;');
+    }
     
     // Commit transaction
     db.exec('COMMIT;');
