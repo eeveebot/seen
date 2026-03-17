@@ -1,6 +1,6 @@
 {
   "name": "@eeveebot/seen",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "seen module for eevee.bot",
   "main": "dist/main.mjs",
   "type": "module",

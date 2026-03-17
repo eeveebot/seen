@@ -798,7 +798,12 @@ const lurkersCommandSub = nats.subscribe(
         return;
       }
 
-      // Find users in database who haven't been seen since cutoff time
+      // Get nicknames of current users for filtering
+      const currentUserNicks = new Set(
+        currentUsers.map((user) => user.nick.toLowerCase())
+      );
+
+      // Find users in database who haven't been seen since cutoff time AND are currently in channel
       const stmt = db!.prepare(`
         SELECT nick, date FROM seen_users
         WHERE date < @cutoffTime AND channel = @channel AND platform = @platform AND instance = @instance AND network = @network
@@ -806,14 +811,19 @@ const lurkersCommandSub = nats.subscribe(
         LIMIT @limit
       `);
 
-      const oldUsers = stmt.all({
+      // Get all users who haven't been seen since cutoff time
+      const allOldUsers = stmt.all({
         cutoffTime,
-        limit,
         channel: data.channel,
         platform: data.platform,
         instance: data.instance,
         network: data.network,
       }) as Array<{ nick: string; date: string }>;
+
+      // Filter to only include users currently in channel
+      const oldUsers = allOldUsers.filter((user) =>
+        currentUserNicks.has(user.nick.toLowerCase())
+      ).slice(0, limit);
 
       // Find users who are currently in channel but not in database (never seen)
       const unseenUsers: Array<{ nick: string; date: string }> = [];
