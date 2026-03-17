@@ -215,6 +215,7 @@ async function registerSeenCommand(): Promise<void> {
     instance: '.*', // Match all instances
     channel: '.*', // Match all channels
     user: '.*', // Match all users
+    nick: '.*', // Match all nicks
     regex: '^seen\\s+', // Match seen followed by whitespace
     platformPrefixAllowed: true,
     ratelimit: rateLimitConfig,
@@ -256,6 +257,7 @@ async function registerSinceCommand(): Promise<void> {
     instance: '.*', // Match all instances
     channel: '.*', // Match all channels
     user: '.*', // Match all users
+    nick: '.*', // Match all nicks
     regex: '^since\\s+', // Match since followed by whitespace
     platformPrefixAllowed: true,
     ratelimit: rateLimitConfig,
@@ -297,6 +299,7 @@ async function registerLurkersCommand(): Promise<void> {
     instance: '.*', // Match all instances
     channel: '.*', // Match all channels
     user: '.*', // Match all users
+    nick: '.*', // Match all nicks
     regex: '^lurkers\\s*', // Match lurkers command
     platformPrefixAllowed: true,
     ratelimit: rateLimitConfig,
@@ -327,6 +330,7 @@ async function registerSeenBroadcast(): Promise<void> {
     instance: '.*', // Match all instances
     channel: '.*', // Match all channels
     user: '.*', // Match all users
+    nick: '.*', // Match all nicks
     messageFilterRegex: '.*', // Match all messages
     ttl: 120000, // 2 minutes TTL
   };
@@ -765,7 +769,7 @@ const lurkersCommandSub = nats.subscribe(
           producer: 'seen',
           channel: data.channel,
           userCount: currentUsers.length,
-          users: currentUsers.map(u => u.nick),
+          users: currentUsers.map((u) => u.nick),
         });
       } catch (error) {
         log.error('Failed to get user list', {
@@ -814,34 +818,34 @@ const lurkersCommandSub = nats.subscribe(
       // Find users who are currently in channel but not in database (never seen)
       const unseenUsers: Array<{ nick: string; date: string }> = [];
       const maxUnseenUsers = Math.max(0, limit - oldUsers.length);
-      
+
       if (maxUnseenUsers > 0) {
         // Query database for all users in this channel to exclude them from unseen users
         const allChannelUsersStmt = db!.prepare(`
           SELECT DISTINCT nick FROM seen_users
           WHERE channel = @channel AND platform = @platform AND instance = @instance AND network = @network
         `);
-        
+
         const seenUsers = allChannelUsersStmt.all({
           channel: data.channel,
           platform: data.platform,
           instance: data.instance,
           network: data.network,
         }) as Array<{ nick: string }>;
-        
+
         const seenUserNicks = new Set(
           seenUsers.map((user) => user.nick.toLowerCase())
         );
-        
+
         // Add currently present users who have never been seen to the unseen list
         for (const currentUser of currentUsers) {
           if (unseenUsers.length >= maxUnseenUsers) break;
-          
+
           const lowerNick = currentUser.nick.toLowerCase();
           if (!seenUserNicks.has(lowerNick)) {
             unseenUsers.push({
               nick: currentUser.nick,
-              date: new Date(0).toISOString() // Epoch time for "never seen"
+              date: new Date(0).toISOString(), // Epoch time for "never seen"
             });
           }
         }
@@ -868,14 +872,10 @@ const lurkersCommandSub = nats.subscribe(
           .map((user) => {
             const nickText = colorizeSeen(user.nick, data.platform, 'user');
             const lastSeenDate = new Date(user.date);
-            
+
             // For users never seen (epoch time), show "never"
             if (lastSeenDate.getTime() === 0) {
-              const neverText = colorizeSeen(
-                'never',
-                data.platform,
-                'date'
-              );
+              const neverText = colorizeSeen('never', data.platform, 'date');
               return `${nickText} (${neverText})`;
             } else {
               // For users seen long ago, show days ago
@@ -937,7 +937,7 @@ const seenBroadcastSub = nats.subscribe(
 
       // Update seen database with platform/network/instance/channel information
       const seenData = {
-        nick: data.user.toLowerCase(),
+        nick: data.nick.toLowerCase(),
         date: new Date().toISOString(),
         text: data.text,
         platform: data.platform,
