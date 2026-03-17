@@ -820,6 +820,7 @@ const lurkersCommandSub = nats.subscribe(
           platform: data.platform,
           instance: data.instance,
           network: data.network,
+          limit: limit,
         }) as Array<{ nick: string; date: string }>;
       } catch (error) {
         log.error('Failed to execute lurkers query for old users', {
