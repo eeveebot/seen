@@ -127,6 +127,110 @@ await nats.connect();
 // Load configuration at startup
 const seenConfig = loadSeenConfig();
 
+// Run database migrations
+function runMigrations(db: Database.Database): void {
+  try {
+    // Check if we need to run the migration by checking if the new columns exist
+    const tableInfo = db.pragma('table_info(seen_users)') as Array<{ name: string }>;
+    const columnNames = tableInfo.map(col => col.name);
+    
+    // Check if we have the new columns
+    const hasPlatformColumn = columnNames.includes('platform');
+    const hasNetworkColumn = columnNames.includes('network');
+    const hasInstanceColumn = columnNames.includes('instance');
+    const hasChannelColumn = columnNames.includes('channel');
+    
+    // If we don't have the new columns, we need to run the migration
+    if (!hasPlatformColumn || !hasNetworkColumn || !hasInstanceColumn || !hasChannelColumn) {
+      log.info('Running database migration to add platform/network/instance/channel columns', {
+        producer: 'seen',
+      });
+      
+      // Begin transaction
+      db.exec('BEGIN TRANSACTION;');
+      
+      try {
+        // Create new table with the updated schema
+        db.exec(`
+          CREATE TABLE seen_users_new (
+            nick TEXT,
+            date TEXT,
+            text TEXT,
+            platform TEXT,
+            network TEXT,
+            instance TEXT,
+            channel TEXT,
+            PRIMARY KEY (nick, platform, network, instance, channel)
+          );
+        `);
+        
+        // Copy data from old table to new table
+        if (hasPlatformColumn) {
+          // If we have some of the columns, copy all existing data
+          db.exec(`
+            INSERT INTO seen_users_new (nick, date, text, platform, network, instance, channel)
+            SELECT nick, date, text, platform, network, instance, channel FROM seen_users;
+          `);
+        } else {
+          // If we don't have the new columns, copy data with default values
+          db.exec(`
+            INSERT INTO seen_users_new (nick, date, text, platform, network, instance, channel)
+            SELECT nick, date, text, 'unknown', 'unknown', 'unknown', 'unknown' FROM seen_users;
+          `);
+        }
+        
+        // Drop old table
+        db.exec('DROP TABLE seen_users;');
+        
+        // Rename new table to original name
+        db.exec('ALTER TABLE seen_users_new RENAME TO seen_users;');
+        
+        // Create indexes for better performance
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_seen_users_platform 
+          ON seen_users(platform);
+        `);
+        
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_seen_users_network 
+          ON seen_users(network);
+        `);
+        
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_seen_users_instance 
+          ON seen_users(instance);
+        `);
+        
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_seen_users_channel 
+          ON seen_users(channel);
+        `);
+        
+        // Commit transaction
+        db.exec('COMMIT;');
+        
+        log.info('Database migration completed successfully', {
+          producer: 'seen',
+        });
+      } catch (error) {
+        // Rollback transaction on error
+        db.exec('ROLLBACK;');
+        throw error;
+      }
+    } else {
+      log.info('Database schema is up to date', {
+        producer: 'seen',
+      });
+    }
+  } catch (error) {
+    log.error('Failed to run database migration', {
+      producer: 'seen',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 // Initialize database
 function initDatabase(): void {
   try {
@@ -146,19 +250,19 @@ function initDatabase(): void {
     // Create tables if they don't exist
     db.exec(`
       CREATE TABLE IF NOT EXISTS seen_users (
-        nick TEXT PRIMARY KEY,
+        nick TEXT,
         date TEXT,
-        text TEXT
+        text TEXT,
+        platform TEXT,
+        network TEXT,
+        instance TEXT,
+        channel TEXT,
+        PRIMARY KEY (nick, platform, network, instance, channel)
       );
     `);
 
-    // Create table for since tracking
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS since_users (
-        nick TEXT PRIMARY KEY,
-        date_seen INTEGER
-      );
-    `);
+    // Run migrations
+    runMigrations(db);
 
     log.info('Initialized seen database', {
       producer: 'seen',
@@ -179,25 +283,20 @@ initDatabase();
 // Prepared statements for database operations
 const findUserStmt = db!.prepare(`
   SELECT * FROM seen_users WHERE nick = @nick
+  ORDER BY date DESC
+  LIMIT 1
 `);
 
-const updateUserStmt = db!.prepare(`
-  INSERT INTO seen_users (nick, date, text)
-  VALUES (@nick, @date, @text)
-  ON CONFLICT(nick) DO UPDATE SET
+const updateSeenUserStmt = db!.prepare(`
+  INSERT INTO seen_users (nick, date, text, platform, network, instance, channel)
+  VALUES (@nick, @date, @text, @platform, @network, @instance, @channel)
+  ON CONFLICT(nick, platform, network, instance, channel) DO UPDATE SET
     date = excluded.date,
     text = excluded.text
 `);
 
 const findUsersSinceStmt = db!.prepare(`
-  SELECT nick FROM since_users WHERE date_seen >= @sinceTime
-`);
-
-const updateSinceUserStmt = db!.prepare(`
-  INSERT INTO since_users (nick, date_seen)
-  VALUES (@nick, @dateSeen)
-  ON CONFLICT(nick) DO UPDATE SET
-    date_seen = excluded.date_seen
+  SELECT DISTINCT nick FROM seen_users WHERE date >= datetime(@sinceTime, 'unixepoch')
 `);
 
 // Function to register the seen command with the router
@@ -658,15 +757,15 @@ const lurkersCommandSub = nats.subscribe(
       const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
 
       // Query database for users not seen since cutoff time
-      // We want users with date_seen older than cutoffTime, ordered by oldest first
+      // We want users with date older than cutoffTime, ordered by oldest first
       const stmt = db!.prepare(`
-        SELECT nick, date_seen FROM since_users
-        WHERE date_seen < @cutoffTime
-        ORDER BY date_seen ASC
+        SELECT nick, date FROM seen_users
+        WHERE date < datetime(@cutoffTime, 'unixepoch')
+        ORDER BY date ASC
         LIMIT @limit
       `);
 
-      const users = stmt.all({ cutoffTime, limit }) as Array<{ nick: string; date_seen: number }>;
+      const users = stmt.all({ cutoffTime, limit }) as Array<{ nick: string; date: string }>;
 
       // Colorize the response
       const userText = colorizeSeen(data.user, data.platform, 'user');
@@ -685,7 +784,7 @@ const lurkersCommandSub = nats.subscribe(
         const lurkerList = users
           .map(user => {
             const nickText = colorizeSeen(user.nick, data.platform, 'user');
-            const lastSeenDate = new Date(user.date_seen);
+            const lastSeenDate = new Date(user.date);
             const diffTime = Math.abs(Date.now() - lastSeenDate.getTime());
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
             const daysAgoText = colorizeSeen(`${diffDays}d`, data.platform, 'date');
@@ -737,20 +836,17 @@ const seenBroadcastSub = nats.subscribe(
         user: data.user,
       });
 
-      // Update seen database
+      // Update seen database with platform/network/instance/channel information
       const seenData = {
         nick: data.user.toLowerCase(),
         date: new Date().toISOString(),
         text: data.text,
+        platform: data.platform,
+        network: data.network,
+        instance: data.instance,
+        channel: data.channel,
       };
-      updateUserStmt.run(seenData);
-
-      // Update since database
-      const sinceData = {
-        nick: data.user.toLowerCase(),
-        dateSeen: Date.now(),
-      };
-      updateSinceUserStmt.run(sinceData);
+      updateSeenUserStmt.run(seenData);
     } catch (error) {
       log.error('Failed to process broadcast message for seen tracking', {
         producer: 'seen',
