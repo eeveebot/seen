@@ -4,6 +4,7 @@
 // Tracks when users were last seen and provides commands to check
 
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import yaml from 'js-yaml';
 import { NatsClient, log } from '@eeveebot/libeevee';
 import Database from 'better-sqlite3';
@@ -643,7 +644,7 @@ async function getUsersInChannel(
 > {
   return new Promise((resolve, reject) => {
     // Generate a unique reply channel
-    const replyChannel = `seen.userlist.reply.${Date.now()}.${Math.random().toString(36).substr(2, 9)}`;
+    const replyChannel = `seen.userlist.reply.${randomUUID()}`;
 
     // Set up timeout
     const timeout = setTimeout(() => {
