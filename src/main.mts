@@ -127,110 +127,6 @@ await nats.connect();
 // Load configuration at startup
 const seenConfig = loadSeenConfig();
 
-// Run database migrations
-function runMigrations(db: Database.Database): void {
-  try {
-    // Check if we need to run the migration by checking if the new columns exist
-    const tableInfo = db.pragma('table_info(seen_users)') as Array<{ name: string }>;
-    const columnNames = tableInfo.map(col => col.name);
-    
-    // Check if we have the new columns
-    const hasPlatformColumn = columnNames.includes('platform');
-    const hasNetworkColumn = columnNames.includes('network');
-    const hasInstanceColumn = columnNames.includes('instance');
-    const hasChannelColumn = columnNames.includes('channel');
-    
-    // If we don't have the new columns, we need to run the migration
-    if (!hasPlatformColumn || !hasNetworkColumn || !hasInstanceColumn || !hasChannelColumn) {
-      log.info('Running database migration to add platform/network/instance/channel columns', {
-        producer: 'seen',
-      });
-      
-      // Begin transaction
-      db.exec('BEGIN TRANSACTION;');
-      
-      try {
-        // Create new table with the updated schema
-        db.exec(`
-          CREATE TABLE seen_users_new (
-            nick TEXT,
-            date TEXT,
-            text TEXT,
-            platform TEXT,
-            network TEXT,
-            instance TEXT,
-            channel TEXT,
-            PRIMARY KEY (nick, platform, network, instance, channel)
-          );
-        `);
-        
-        // Copy data from old table to new table
-        if (hasPlatformColumn) {
-          // If we have some of the columns, copy all existing data
-          db.exec(`
-            INSERT INTO seen_users_new (nick, date, text, platform, network, instance, channel)
-            SELECT nick, date, text, platform, network, instance, channel FROM seen_users;
-          `);
-        } else {
-          // If we don't have the new columns, copy data with default values
-          db.exec(`
-            INSERT INTO seen_users_new (nick, date, text, platform, network, instance, channel)
-            SELECT nick, date, text, 'unknown', 'unknown', 'unknown', 'unknown' FROM seen_users;
-          `);
-        }
-        
-        // Drop old table
-        db.exec('DROP TABLE seen_users;');
-        
-        // Rename new table to original name
-        db.exec('ALTER TABLE seen_users_new RENAME TO seen_users;');
-        
-        // Create indexes for better performance
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_seen_users_platform 
-          ON seen_users(platform);
-        `);
-        
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_seen_users_network 
-          ON seen_users(network);
-        `);
-        
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_seen_users_instance 
-          ON seen_users(instance);
-        `);
-        
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_seen_users_channel 
-          ON seen_users(channel);
-        `);
-        
-        // Commit transaction
-        db.exec('COMMIT;');
-        
-        log.info('Database migration completed successfully', {
-          producer: 'seen',
-        });
-      } catch (error) {
-        // Rollback transaction on error
-        db.exec('ROLLBACK;');
-        throw error;
-      }
-    } else {
-      log.info('Database schema is up to date', {
-        producer: 'seen',
-      });
-    }
-  } catch (error) {
-    log.error('Failed to run database migration', {
-      producer: 'seen',
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
-}
-
 // Initialize database
 function initDatabase(): void {
   try {
@@ -260,9 +156,6 @@ function initDatabase(): void {
         PRIMARY KEY (nick, platform, network, instance, channel)
       );
     `);
-
-    // Run migrations
-    runMigrations(db);
 
     log.info('Initialized seen database', {
       producer: 'seen',
@@ -296,7 +189,7 @@ const updateSeenUserStmt = db!.prepare(`
 `);
 
 const findUsersSinceStmt = db!.prepare(`
-  SELECT DISTINCT nick FROM seen_users WHERE date >= datetime(@sinceTime, 'unixepoch')
+  SELECT DISTINCT nick FROM seen_users WHERE date >= @sinceTime
 `);
 
 // Function to register the seen command with the router
@@ -663,7 +556,7 @@ const sinceCommandSub = nats.subscribe(
 
       // Cap at 1440 minutes (24 hours)
       const lookbackMinutes = Math.min(minutes, 1440);
-      const sinceTime = Date.now() - lookbackMinutes * 60000;
+      const sinceTime = new Date(Date.now() - lookbackMinutes * 60000).toISOString();
 
       // Find users seen since the specified time
       const users = findUsersSinceStmt.all({ sinceTime }) as Array<{
@@ -754,13 +647,13 @@ const lurkersCommandSub = nats.subscribe(
         limit = isNaN(limitParam) ? 10 : Math.max(1, Math.min(limitParam, 50)); // Clamp between 1-50
       }
 
-      const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
+      const cutoffTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
       // Query database for users not seen since cutoff time
       // We want users with date older than cutoffTime, ordered by oldest first
       const stmt = db!.prepare(`
         SELECT nick, date FROM seen_users
-        WHERE date < datetime(@cutoffTime, 'unixepoch')
+        WHERE date < @cutoffTime
         ORDER BY date ASC
         LIMIT @limit
       `);
