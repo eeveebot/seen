@@ -922,38 +922,39 @@ const lurkersCommandSub = nats.subscribe(
 natsSubscriptions.push(lurkersCommandSub);
 
 // Subscribe to broadcast messages to track user activity
-const seenBroadcastSub = nats.subscribe(
-  `broadcast.message.${seenBroadcastUUID}`,
-  (subject, message) => {
-    try {
-      const data = JSON.parse(message.string());
-      log.debug('Received broadcast.message for seen tracking', {
-        producer: 'seen',
-        platform: data.platform,
-        instance: data.instance,
-        channel: data.channel,
-        user: data.user,
-      });
+  const seenBroadcastSub = nats.subscribe(
+    `broadcast.message.${seenBroadcastUUID}`,
+    (subject, message) => {
+      try {
+        const data = JSON.parse(message.string());
+        log.debug('Received broadcast.message for seen tracking', {
+          producer: 'seen',
+          platform: data.platform,
+          instance: data.instance,
+          channel: data.channel,
+          user: data.user,
+        });
 
-      // Update seen database with platform/network/instance/channel information
-      const seenData = {
-        nick: data.nick.toLowerCase(),
-        date: new Date().toISOString(),
-        text: data.text,
-        platform: data.platform,
-        network: data.network,
-        instance: data.instance,
-        channel: data.channel,
-      };
-      updateSeenUserStmt.run(seenData);
-    } catch (error) {
-      log.error('Failed to process broadcast message for seen tracking', {
-        producer: 'seen',
-        error: error,
-      });
+        // Update seen database with platform/network/instance/channel information
+        const seenData = {
+          nick: data.nick?.toLowerCase() || data.user?.toLowerCase() || '',
+          date: new Date().toISOString(),
+          text: data.text,
+          platform: data.platform,
+          network: data.network,
+          instance: data.instance,
+          channel: data.channel,
+        };
+        updateSeenUserStmt.run(seenData);
+      } catch (error) {
+        log.error('Failed to process broadcast message for seen tracking', {
+          producer: 'seen',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
     }
-  }
-);
+  );
 natsSubscriptions.push(seenBroadcastSub);
 
 // Subscribe to control messages for re-registering commands
