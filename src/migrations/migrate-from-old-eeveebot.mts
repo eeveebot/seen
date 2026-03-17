@@ -85,14 +85,14 @@ async function migrateSeenDatabase(
 
     // Migrate data
     const oldRecords = oldStmt.all() as OldSeenRecord[];
-    const newRecords: NewSeenRecord[] = oldRecords.map(record => ({
+    const newRecords: NewSeenRecord[] = oldRecords.map((record) => ({
       nick: record.nick,
       date: record.date,
       text: record.text,
       platform,
       network,
       instance,
-      channel
+      channel,
     }));
 
     // Execute transaction
@@ -105,12 +105,12 @@ async function migrateSeenDatabase(
     log.info('Successfully migrated seen database', {
       producer: 'seen-migration',
       oldRecordCount: oldRecords.length,
-      newRecordCount: newRecords.length
+      newRecordCount: newRecords.length,
     });
   } catch (error) {
     log.error('Failed to migrate seen database', {
       producer: 'seen-migration',
-      error: error instanceof Error ? error.message : String(error)
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }
@@ -119,10 +119,14 @@ async function migrateSeenDatabase(
 // Command line interface
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  
+
   if (args.length < 2) {
-    console.log('Usage: migrate-seen-db.mts <old-db-path> <new-db-path> [platform] [network] [instance] [channel]');
-    console.log('Example: migrate-seen-db.mts ./old-seen.db ./new-seen.db irc libera default #general');
+    console.log(
+      'Usage: migrate-seen-db.mts <old-db-path> <new-db-path> [platform] [network] [instance] [channel]'
+    );
+    console.log(
+      'Example: migrate-seen-db.mts ./old-seen.db ./new-seen.db irc libera default #general'
+    );
     process.exit(1);
   }
 
@@ -134,7 +138,14 @@ async function main(): Promise<void> {
   const channel = args[5] || 'unknown';
 
   try {
-    await migrateSeenDatabase(oldDbPath, newDbPath, platform, network, instance, channel);
+    await migrateSeenDatabase(
+      oldDbPath,
+      newDbPath,
+      platform,
+      network,
+      instance,
+      channel
+    );
     console.log('Migration completed successfully');
   } catch (error) {
     console.error('Migration failed:', error);

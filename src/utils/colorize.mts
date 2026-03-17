@@ -1,24 +1,18 @@
-import * as ircColors from 'irc-colors';
-import { log } from '@eeveebot/libeevee';
-
-// Handle both ES module and CommonJS imports
-const ircColorsObj =
-  (ircColors as unknown as { default?: typeof ircColors }).default || ircColors;
+import { ircColors, log } from '@eeveebot/libeevee';
 
 // Available irc-colors for seen module
-// Using a more defensive approach to avoid runtime errors
 const safeColorFunctions: Record<
   string,
   ((text: string) => string) | undefined
 > = {
-  blue: ircColorsObj.blue,
-  cyan: ircColorsObj.cyan,
-  green: ircColorsObj.green,
-  yellow: ircColorsObj.yellow,
-  orange: ircColorsObj.orange,
-  red: ircColorsObj.red,
-  purple: ircColorsObj.purple,
-  gray: ircColorsObj.gray,
+  blue: ircColors.blue,
+  cyan: ircColors.cyan,
+  green: ircColors.green,
+  yellow: ircColors.yellow,
+  orange: ircColors.orange,
+  red: ircColors.red,
+  purple: ircColors.purple,
+  gray: ircColors.gray,
 };
 
 /**
