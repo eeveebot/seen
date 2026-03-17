@@ -280,7 +280,7 @@ async function registerLurkersCommand(): Promise<void> {
   const defaultRateLimit = {
     mode: 'drop',
     level: 'user',
-    limit: 5,
+    limit: 10,
     interval: '1m',
   };
 
@@ -637,14 +637,14 @@ const lurkersCommandSub = nats.subscribe(
       const daysMatch = args.match(/^(\d+)/);
       if (daysMatch) {
         const daysParam = parseInt(daysMatch[1]);
-        days = isNaN(daysParam) ? 30 : Math.max(1, Math.min(daysParam, 365)); // Clamp between 1-365
+        days = isNaN(daysParam) ? 30 : Math.max(1, Math.min(daysParam, 5000)); // Clamp between 1-5000
       }
 
       // Extract limit parameter (--limit N or -l N)
       const limitMatch = args.match(/(?:--limit|-l)\s+(\d+)/);
       if (limitMatch) {
         const limitParam = parseInt(limitMatch[1]);
-        limit = isNaN(limitParam) ? 10 : Math.max(1, Math.min(limitParam, 50)); // Clamp between 1-50
+        limit = isNaN(limitParam) ? 10 : Math.max(1, Math.min(limitParam, 500)); // Clamp between 1-500
       }
 
       const cutoffTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
