@@ -304,7 +304,7 @@ async function registerLurkersCommand(): Promise<void> {
     instance: '.*', // Match all instances
     channel: '.*', // Match all channels
     user: '.*', // Match all users
-    regex: '^lurkers(?:\\s+(?:\\d+|(?:(?:--limit|-l)\\s+\\d+)|(?:\\d+\\s+(?:--limit|-l)\\s+\\d+))*)?$', // Match lurkers with optional parameters
+    regex: '^lurkers\\s*', // Match lurkers command
     platformPrefixAllowed: true,
     ratelimit: rateLimitConfig,
   };
@@ -640,14 +640,14 @@ const lurkersCommandSub = nats.subscribe(
       const args = data.text.trim();
       let days = 30; // Default to 30 days
       let limit = 10; // Default limit
-      
+
       // Extract days parameter (first numeric value)
       const daysMatch = args.match(/^(\d+)/);
       if (daysMatch) {
         const daysParam = parseInt(daysMatch[1]);
         days = isNaN(daysParam) ? 30 : Math.max(1, Math.min(daysParam, 365)); // Clamp between 1-365
       }
-      
+
       // Extract limit parameter (--limit N or -l N)
       const limitMatch = args.match(/(?:--limit|-l)\s+(\d+)/);
       if (limitMatch) {
@@ -658,13 +658,14 @@ const lurkersCommandSub = nats.subscribe(
       const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
 
       // Query database for users not seen since cutoff time
+      // We want users with date_seen older than cutoffTime, ordered by oldest first
       const stmt = db!.prepare(`
-        SELECT nick, date_seen FROM since_users 
-        WHERE date_seen < @cutoffTime 
+        SELECT nick, date_seen FROM since_users
+        WHERE date_seen < @cutoffTime
         ORDER BY date_seen ASC
         LIMIT @limit
       `);
-      
+
       const users = stmt.all({ cutoffTime, limit }) as Array<{ nick: string; date_seen: number }>;
 
       // Colorize the response
@@ -691,7 +692,7 @@ const lurkersCommandSub = nats.subscribe(
             return `${nickText} (${daysAgoText})`;
           })
           .join(', ');
-        
+
         const infoText = colorizeSeen(
           `Top ${limitText} lurkers not seen in the last ${daysText} days:`,
           data.platform,
