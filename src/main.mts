@@ -18,6 +18,9 @@ const seenCommandDisplayName = 'seen';
 const sinceCommandUUID = 'eec16230-25ac-4c6b-84fd-feacf7753c7d';
 const sinceCommandDisplayName = 'since';
 
+const lurkersCommandUUID = 'a1b2c3d4-5678-9012-3456-789012345678';
+const lurkersCommandDisplayName = 'lurkers';
+
 const seenBroadcastUUID = 'd3a0ee0a-32e3-4613-bcdd-736c52e38e81';
 const seenBroadcastDisplayName = 'seen';
 
@@ -279,6 +282,47 @@ async function registerSinceCommand(): Promise<void> {
   }
 }
 
+// Function to register the lurkers command with the router
+async function registerLurkersCommand(): Promise<void> {
+  // Default rate limit configuration
+  const defaultRateLimit = {
+    mode: 'drop',
+    level: 'user',
+    limit: 5,
+    interval: '1m',
+  };
+
+  // Use configured rate limit or default
+  const rateLimitConfig = seenConfig.ratelimit || defaultRateLimit;
+
+  const commandRegistration = {
+    type: 'command.register',
+    commandUUID: lurkersCommandUUID,
+    commandDisplayName: lurkersCommandDisplayName,
+    platform: '.*', // Match all platforms
+    network: '.*', // Match all networks
+    instance: '.*', // Match all instances
+    channel: '.*', // Match all channels
+    user: '.*', // Match all users
+    regex: '^lurkers(?:\\s+(?:\\d+|(?:(?:--limit|-l)\\s+\\d+)|(?:\\d+\\s+(?:--limit|-l)\\s+\\d+))*)?$', // Match lurkers with optional parameters
+    platformPrefixAllowed: true,
+    ratelimit: rateLimitConfig,
+  };
+
+  try {
+    await nats.publish('command.register', JSON.stringify(commandRegistration));
+    log.info('Registered lurkers command with router', {
+      producer: 'seen',
+      ratelimit: rateLimitConfig,
+    });
+  } catch (error) {
+    log.error('Failed to register lurkers command', {
+      producer: 'seen',
+      error: error,
+    });
+  }
+}
+
 // Function to register the seen broadcast with the router
 async function registerSeenBroadcast(): Promise<void> {
   const broadcastRegistration = {
@@ -316,6 +360,7 @@ await registerSeenBroadcast();
 // Register commands at startup
 await registerSeenCommand();
 await registerSinceCommand();
+await registerLurkersCommand();
 
 // Subscribe to seen command execution messages
 const seenCommandSub = nats.subscribe(
@@ -576,6 +621,107 @@ const sinceCommandSub = nats.subscribe(
 );
 natsSubscriptions.push(sinceCommandSub);
 
+// Subscribe to lurkers command execution messages
+const lurkersCommandSub = nats.subscribe(
+  `command.execute.${lurkersCommandUUID}`,
+  (subject, message) => {
+    try {
+      const data = JSON.parse(message.string());
+      log.info('Received command.execute for lurkers', {
+        producer: 'seen',
+        platform: data.platform,
+        instance: data.instance,
+        channel: data.channel,
+        user: data.user,
+        originalText: data.originalText,
+      });
+
+      // Parse the command: lurkers [days] [--limit N]
+      const args = data.text.trim();
+      let days = 30; // Default to 30 days
+      let limit = 10; // Default limit
+      
+      // Extract days parameter (first numeric value)
+      const daysMatch = args.match(/^(\d+)/);
+      if (daysMatch) {
+        const daysParam = parseInt(daysMatch[1]);
+        days = isNaN(daysParam) ? 30 : Math.max(1, Math.min(daysParam, 365)); // Clamp between 1-365
+      }
+      
+      // Extract limit parameter (--limit N or -l N)
+      const limitMatch = args.match(/(?:--limit|-l)\s+(\d+)/);
+      if (limitMatch) {
+        const limitParam = parseInt(limitMatch[1]);
+        limit = isNaN(limitParam) ? 10 : Math.max(1, Math.min(limitParam, 50)); // Clamp between 1-50
+      }
+
+      const cutoffTime = Date.now() - days * 24 * 60 * 60 * 1000;
+
+      // Query database for users not seen since cutoff time
+      const stmt = db!.prepare(`
+        SELECT nick, date_seen FROM since_users 
+        WHERE date_seen < @cutoffTime 
+        ORDER BY date_seen ASC
+        LIMIT @limit
+      `);
+      
+      const users = stmt.all({ cutoffTime, limit }) as Array<{ nick: string; date_seen: number }>;
+
+      // Colorize the response
+      const userText = colorizeSeen(data.user, data.platform, 'user');
+      let responseText = '';
+
+      if (users.length === 0) {
+        const infoText = colorizeSeen(
+          `No lurkers found in the last ${days} days`,
+          data.platform,
+          'info'
+        );
+        responseText = `${userText}: ${infoText}`;
+      } else {
+        const daysText = colorizeSeen(days.toString(), data.platform, 'date');
+        const limitText = colorizeSeen(limit.toString(), data.platform, 'date');
+        const lurkerList = users
+          .map(user => {
+            const nickText = colorizeSeen(user.nick, data.platform, 'user');
+            const lastSeenDate = new Date(user.date_seen);
+            const diffTime = Math.abs(Date.now() - lastSeenDate.getTime());
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            const daysAgoText = colorizeSeen(`${diffDays}d`, data.platform, 'date');
+            return `${nickText} (${daysAgoText})`;
+          })
+          .join(', ');
+        
+        const infoText = colorizeSeen(
+          `Top ${limitText} lurkers not seen in the last ${daysText} days:`,
+          data.platform,
+          'info'
+        );
+        responseText = `${userText}: ${infoText} ${lurkerList}`;
+      }
+
+      const response = {
+        channel: data.channel,
+        network: data.network,
+        instance: data.instance,
+        platform: data.platform,
+        text: responseText,
+        trace: data.trace,
+        type: 'message.outgoing',
+      };
+
+      const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
+      void nats.publish(outgoingTopic, JSON.stringify(response));
+    } catch (error) {
+      log.error('Failed to process lurkers command', {
+        producer: 'seen',
+        error: error,
+      });
+    }
+  }
+);
+natsSubscriptions.push(lurkersCommandSub);
+
 // Subscribe to broadcast messages to track user activity
 const seenBroadcastSub = nats.subscribe(
   `broadcast.message.${seenBroadcastUUID}`,
@@ -651,9 +797,25 @@ const controlSubRegisterCommandAll = nats.subscribe(
     });
     void registerSeenCommand();
     void registerSinceCommand();
+    void registerLurkersCommand();
   }
 );
 natsSubscriptions.push(controlSubRegisterCommandAll);
+
+// Subscribe to control messages for re-registering lurkers command
+const controlSubRegisterCommandLurkers = nats.subscribe(
+  `control.registerCommands.${lurkersCommandDisplayName}`,
+  () => {
+    log.info(
+      `Received control.registerCommands.${lurkersCommandDisplayName} control message`,
+      {
+        producer: 'seen',
+      }
+    );
+    void registerLurkersCommand();
+  }
+);
+natsSubscriptions.push(controlSubRegisterCommandLurkers);
 
 // Subscribe to control messages for re-registering broadcasts
 const controlSubRegisterBroadcastSeen = nats.subscribe(
@@ -733,6 +895,22 @@ const seenHelp = [
         param: 'minutes',
         required: true,
         descr: 'The amount of time to look back (max 1440 minutes)',
+      },
+    ],
+  },
+  {
+    command: 'lurkers',
+    descr: 'Show users who haven\'t been seen in X days',
+    params: [
+      {
+        param: 'days',
+        required: false,
+        descr: 'The number of days to look back (default 30, max 365)',
+      },
+      {
+        param: '--limit N',
+        required: false,
+        descr: 'Limit the number of results (default 10, max 50)',
       },
     ],
   },
