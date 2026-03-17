@@ -747,24 +747,6 @@ const lurkersCommandSub = nats.subscribe(
         Date.now() - days * 24 * 60 * 60 * 1000
       ).toISOString();
 
-      // Query database for users not seen since cutoff time
-      // We want users with date older than cutoffTime, ordered by oldest first
-      const stmt = db!.prepare(`
-        SELECT nick, date FROM seen_users
-        WHERE date < @cutoffTime AND channel = @channel AND platform = @platform AND instance = @instance AND network = @network
-        ORDER BY date ASC
-        LIMIT @limit
-      `);
-
-      const users = stmt.all({
-        cutoffTime,
-        limit,
-        channel: data.channel,
-        platform: data.platform,
-        instance: data.instance,
-        network: data.network,
-      }) as Array<{ nick: string; date: string }>;
-
       // Get current users in channel
       let currentUsers: Array<{
         nick: string;
@@ -779,26 +761,94 @@ const lurkersCommandSub = nats.subscribe(
           data.channel,
           nats
         );
+        log.debug('Retrieved user list from IRC connector', {
+          producer: 'seen',
+          channel: data.channel,
+          userCount: currentUsers.length,
+          users: currentUsers.map(u => u.nick),
+        });
       } catch (error) {
         log.error('Failed to get user list', {
           producer: 'seen',
+          channel: data.channel,
           error: error instanceof Error ? error.message : String(error),
         });
-        // Continue with the lurkers list without filtering by current users
+        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const errorText = colorizeSeen(
+          'Failed to retrieve user list from IRC connector',
+          data.platform,
+          'warning'
+        );
+        const errorMsg = {
+          channel: data.channel,
+          network: data.network,
+          instance: data.instance,
+          platform: data.platform,
+          text: `${userText}: ${errorText}`,
+          trace: data.trace,
+          type: 'message.outgoing',
+        };
+
+        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
+        void nats.publish(outgoingTopic, JSON.stringify(errorMsg));
+        return;
       }
 
-      // Create a set of current user nicks for quick lookup
-      const currentUserNicks = new Set(
-        currentUsers.map((user) => user.nick.toLowerCase())
-      );
+      // Find users in database who haven't been seen since cutoff time
+      const stmt = db!.prepare(`
+        SELECT nick, date FROM seen_users
+        WHERE date < @cutoffTime AND channel = @channel AND platform = @platform AND instance = @instance AND network = @network
+        ORDER BY date ASC
+        LIMIT @limit
+      `);
 
-      // Filter lurkers to only include users currently in the channel
-      const lurkersInChannel =
-        currentUsers.length > 0
-          ? users.filter((user) =>
-              currentUserNicks.has(user.nick.toLowerCase())
-            )
-          : users;
+      const oldUsers = stmt.all({
+        cutoffTime,
+        limit,
+        channel: data.channel,
+        platform: data.platform,
+        instance: data.instance,
+        network: data.network,
+      }) as Array<{ nick: string; date: string }>;
+
+      // Find users who are currently in channel but not in database (never seen)
+      const unseenUsers: Array<{ nick: string; date: string }> = [];
+      const maxUnseenUsers = Math.max(0, limit - oldUsers.length);
+      
+      if (maxUnseenUsers > 0) {
+        // Query database for all users in this channel to exclude them from unseen users
+        const allChannelUsersStmt = db!.prepare(`
+          SELECT DISTINCT nick FROM seen_users
+          WHERE channel = @channel AND platform = @platform AND instance = @instance AND network = @network
+        `);
+        
+        const seenUsers = allChannelUsersStmt.all({
+          channel: data.channel,
+          platform: data.platform,
+          instance: data.instance,
+          network: data.network,
+        }) as Array<{ nick: string }>;
+        
+        const seenUserNicks = new Set(
+          seenUsers.map((user) => user.nick.toLowerCase())
+        );
+        
+        // Add currently present users who have never been seen to the unseen list
+        for (const currentUser of currentUsers) {
+          if (unseenUsers.length >= maxUnseenUsers) break;
+          
+          const lowerNick = currentUser.nick.toLowerCase();
+          if (!seenUserNicks.has(lowerNick)) {
+            unseenUsers.push({
+              nick: currentUser.nick,
+              date: new Date(0).toISOString() // Epoch time for "never seen"
+            });
+          }
+        }
+      }
+
+      // Combine old users and unseen users
+      const lurkersInChannel = [...oldUsers, ...unseenUsers];
 
       // Colorize the response
       const userText = colorizeSeen(data.user, data.platform, 'user');
@@ -818,14 +868,26 @@ const lurkersCommandSub = nats.subscribe(
           .map((user) => {
             const nickText = colorizeSeen(user.nick, data.platform, 'user');
             const lastSeenDate = new Date(user.date);
-            const diffTime = Math.abs(Date.now() - lastSeenDate.getTime());
-            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-            const daysAgoText = colorizeSeen(
-              `${diffDays}d`,
-              data.platform,
-              'date'
-            );
-            return `${nickText} (${daysAgoText})`;
+            
+            // For users never seen (epoch time), show "never"
+            if (lastSeenDate.getTime() === 0) {
+              const neverText = colorizeSeen(
+                'never',
+                data.platform,
+                'date'
+              );
+              return `${nickText} (${neverText})`;
+            } else {
+              // For users seen long ago, show days ago
+              const diffTime = Math.abs(Date.now() - lastSeenDate.getTime());
+              const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+              const daysAgoText = colorizeSeen(
+                `${diffDays}d`,
+                data.platform,
+                'date'
+              );
+              return `${nickText} (${daysAgoText})`;
+            }
           })
           .join(', ');
 
