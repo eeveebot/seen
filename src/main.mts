@@ -935,16 +935,16 @@ natsSubscriptions.push(lurkersCommandSub);
           user: data.user,
         });
 
-        // Update seen database with platform/network/instance/channel information
-        const seenData = {
-          nick: data.nick?.toLowerCase() || data.user?.toLowerCase() || '',
-          date: new Date().toISOString(),
-          text: data.text,
-          platform: data.platform,
-          network: data.network,
-          instance: data.instance,
-          channel: data.channel,
-        };
+      // Update seen database with platform/network/instance/channel information
+      const seenData = {
+        nick: data.nick?.toLowerCase() || '',
+        date: new Date().toISOString(),
+        text: data.text,
+        platform: data.platform,
+        network: data.network,
+        instance: data.instance,
+        channel: data.channel,
+      };
         updateSeenUserStmt.run(seenData);
       } catch (error) {
         log.error('Failed to process broadcast message for seen tracking', {
