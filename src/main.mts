@@ -812,13 +812,30 @@ const lurkersCommandSub = nats.subscribe(
       `);
 
       // Get all users who haven't been seen since cutoff time
-      const allOldUsers = stmt.all({
-        cutoffTime,
-        channel: data.channel,
-        platform: data.platform,
-        instance: data.instance,
-        network: data.network,
-      }) as Array<{ nick: string; date: string }>;
+      let allOldUsers: Array<{ nick: string; date: string }> = [];
+      try {
+        allOldUsers = stmt.all({
+          cutoffTime,
+          channel: data.channel,
+          platform: data.platform,
+          instance: data.instance,
+          network: data.network,
+        }) as Array<{ nick: string; date: string }>;
+      } catch (error) {
+        log.error('Failed to execute lurkers query for old users', {
+          producer: 'seen',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          query: {
+            cutoffTime,
+            channel: data.channel,
+            platform: data.platform,
+            instance: data.instance,
+            network: data.network,
+          },
+        });
+        throw error;
+      }
 
       // Filter to only include users currently in channel
       const oldUsers = allOldUsers.filter((user) =>
@@ -836,12 +853,28 @@ const lurkersCommandSub = nats.subscribe(
           WHERE channel = @channel AND platform = @platform AND instance = @instance AND network = @network
         `);
 
-        const seenUsers = allChannelUsersStmt.all({
-          channel: data.channel,
-          platform: data.platform,
-          instance: data.instance,
-          network: data.network,
-        }) as Array<{ nick: string }>;
+        let seenUsers: Array<{ nick: string }> = [];
+        try {
+          seenUsers = allChannelUsersStmt.all({
+            channel: data.channel,
+            platform: data.platform,
+            instance: data.instance,
+            network: data.network,
+          }) as Array<{ nick: string }>;
+        } catch (error) {
+          log.error('Failed to execute lurkers query for seen users', {
+            producer: 'seen',
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            queries: {
+              channel: data.channel,
+              platform: data.platform,
+              instance: data.instance,
+              network: data.network,
+            },
+          });
+          throw error;
+        }
 
         const seenUserNicks = new Set(
           seenUsers.map((user) => user.nick.toLowerCase())
@@ -924,7 +957,8 @@ const lurkersCommandSub = nats.subscribe(
     } catch (error) {
       log.error('Failed to process lurkers command', {
         producer: 'seen',
-        error: error,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     }
   }
