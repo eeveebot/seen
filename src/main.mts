@@ -18,7 +18,7 @@ const seenCommandDisplayName = 'seen';
 const sinceCommandUUID = 'eec16230-25ac-4c6b-84fd-feacf7753c7d';
 const sinceCommandDisplayName = 'since';
 
-const lurkersCommandUUID = 'a1b2c3d4-5678-9012-3456-789012345678';
+const lurkersCommandUUID = '19cc2f13-e899-404c-b02e-0bbd9148ba73';
 const lurkersCommandDisplayName = 'lurkers';
 
 const seenBroadcastUUID = 'd3a0ee0a-32e3-4613-bcdd-736c52e38e81';
@@ -556,7 +556,9 @@ const sinceCommandSub = nats.subscribe(
 
       // Cap at 1440 minutes (24 hours)
       const lookbackMinutes = Math.min(minutes, 1440);
-      const sinceTime = new Date(Date.now() - lookbackMinutes * 60000).toISOString();
+      const sinceTime = new Date(
+        Date.now() - lookbackMinutes * 60000
+      ).toISOString();
 
       // Find users seen since the specified time
       const users = findUsersSinceStmt.all({ sinceTime }) as Array<{
@@ -613,10 +615,103 @@ const sinceCommandSub = nats.subscribe(
 );
 natsSubscriptions.push(sinceCommandSub);
 
+// Global map to store pending user list requests for lurkers command
+const pendingUserRequests = new Map<
+  string,
+  {
+    resolve: (
+      users: Array<{
+        nick: string;
+        ident: string;
+        hostname: string;
+        modes: string[];
+      }>
+    ) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+  }
+>();
+
+// Helper function to get users in a channel by querying the IRC connector
+async function getUsersInChannel(
+  platform: string,
+  instance: string,
+  channel: string,
+  nats: InstanceType<typeof NatsClient>
+): Promise<
+  Array<{ nick: string; ident: string; hostname: string; modes: string[] }>
+> {
+  return new Promise((resolve, reject) => {
+    // Generate a unique reply channel
+    const replyChannel = `seen.userlist.reply.${Date.now()}.${Math.random().toString(36).substr(2, 9)}`;
+
+    // Set up timeout
+    const timeout = setTimeout(() => {
+      // Clean up the pending request
+      pendingUserRequests.delete(replyChannel);
+
+      reject(new Error('Timeout waiting for user list'));
+    }, 5000); // 5 second timeout
+
+    // Store the promise resolver
+    pendingUserRequests.set(replyChannel, { resolve, reject, timeout });
+
+    // Subscribe to the reply channel
+    void nats
+      .subscribe(replyChannel, (subject, message) => {
+        try {
+          // Clean up the pending request
+          const request = pendingUserRequests.get(replyChannel);
+          if (request) {
+            clearTimeout(request.timeout);
+            pendingUserRequests.delete(replyChannel);
+          }
+
+          // Parse the response
+          const response = JSON.parse(message.string());
+
+          // Check if there was an error
+          if (response.error) {
+            reject(new Error(response.error));
+            return;
+          }
+
+          // Return full user objects with hostmask information
+          resolve(response.users);
+        } catch (error) {
+          log.error('Failed to process user list response', {
+            producer: 'seen',
+            error: error instanceof Error ? error.message : String(error),
+          });
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      })
+      .catch((error) => {
+        log.error('Failed to subscribe to user list reply channel', {
+          producer: 'seen',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
+
+    // Send the control command to the IRC connector
+    const controlMessage = {
+      action: 'list-users-in-channel',
+      data: {
+        channel: channel,
+        replyChannel: replyChannel,
+      },
+    };
+
+    const controlTopic = `control.chatConnectors.${platform}.${instance}`;
+    void nats.publish(controlTopic, JSON.stringify(controlMessage));
+  });
+}
+
 // Subscribe to lurkers command execution messages
 const lurkersCommandSub = nats.subscribe(
   `command.execute.${lurkersCommandUUID}`,
-  (subject, message) => {
+  async (subject, message) => {
     try {
       const data = JSON.parse(message.string());
       log.info('Received command.execute for lurkers', {
@@ -647,24 +742,68 @@ const lurkersCommandSub = nats.subscribe(
         limit = isNaN(limitParam) ? 10 : Math.max(1, Math.min(limitParam, 500)); // Clamp between 1-500
       }
 
-      const cutoffTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const cutoffTime = new Date(
+        Date.now() - days * 24 * 60 * 60 * 1000
+      ).toISOString();
 
       // Query database for users not seen since cutoff time
       // We want users with date older than cutoffTime, ordered by oldest first
       const stmt = db!.prepare(`
         SELECT nick, date FROM seen_users
-        WHERE date < @cutoffTime
+        WHERE date < @cutoffTime AND channel = @channel AND platform = @platform AND instance = @instance AND network = @network
         ORDER BY date ASC
         LIMIT @limit
       `);
 
-      const users = stmt.all({ cutoffTime, limit }) as Array<{ nick: string; date: string }>;
+      const users = stmt.all({
+        cutoffTime,
+        limit,
+        channel: data.channel,
+        platform: data.platform,
+        instance: data.instance,
+        network: data.network,
+      }) as Array<{ nick: string; date: string }>;
+
+      // Get current users in channel
+      let currentUsers: Array<{
+        nick: string;
+        ident: string;
+        hostname: string;
+        modes: string[];
+      }> = [];
+      try {
+        currentUsers = await getUsersInChannel(
+          data.platform,
+          data.instance,
+          data.channel,
+          nats
+        );
+      } catch (error) {
+        log.error('Failed to get user list', {
+          producer: 'seen',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Continue with the lurkers list without filtering by current users
+      }
+
+      // Create a set of current user nicks for quick lookup
+      const currentUserNicks = new Set(
+        currentUsers.map((user) => user.nick.toLowerCase())
+      );
+
+      // Filter lurkers to only include users currently in the channel
+      const lurkersInChannel =
+        currentUsers.length > 0
+          ? users.filter((user) =>
+              currentUserNicks.has(user.nick.toLowerCase())
+            )
+          : users;
 
       // Colorize the response
       const userText = colorizeSeen(data.user, data.platform, 'user');
       let responseText = '';
 
-      if (users.length === 0) {
+      if (lurkersInChannel.length === 0) {
         const infoText = colorizeSeen(
           `No lurkers found in the last ${days} days`,
           data.platform,
@@ -674,19 +813,23 @@ const lurkersCommandSub = nats.subscribe(
       } else {
         const daysText = colorizeSeen(days.toString(), data.platform, 'date');
         const limitText = colorizeSeen(limit.toString(), data.platform, 'date');
-        const lurkerList = users
-          .map(user => {
+        const lurkerList = lurkersInChannel
+          .map((user) => {
             const nickText = colorizeSeen(user.nick, data.platform, 'user');
             const lastSeenDate = new Date(user.date);
             const diffTime = Math.abs(Date.now() - lastSeenDate.getTime());
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-            const daysAgoText = colorizeSeen(`${diffDays}d`, data.platform, 'date');
+            const daysAgoText = colorizeSeen(
+              `${diffDays}d`,
+              data.platform,
+              'date'
+            );
             return `${nickText} (${daysAgoText})`;
           })
           .join(', ');
 
         const infoText = colorizeSeen(
-          `Top ${limitText} lurkers not seen in the last ${daysText} days:`,
+          `Top ${limitText} lurkers not seen in the last ${daysText} days (currently in channel):`,
           data.platform,
           'info'
         );
@@ -890,7 +1033,7 @@ const seenHelp = [
   },
   {
     command: 'lurkers',
-    descr: 'Show users who haven\'t been seen in X days',
+    descr: "Show users who haven't been seen in X days",
     params: [
       {
         param: 'days',
