@@ -393,7 +393,6 @@ const sinceCommandSub = nats.subscribe(
 natsSubscriptions.push(sinceCommandSub);
 
 // Global map to store pending user list requests for lurkers command
-// getUsersInChannel is now provided by libeevee as queryChannelUsers
 
 // Subscribe to lurkers command execution messages
 const lurkersCommandSub = nats.subscribe(
@@ -441,11 +440,12 @@ const lurkersCommandSub = nats.subscribe(
         modes: string[];
       }> = [];
       try {
-        currentUsers = await getUsersInChannel(
+        currentUsers = await queryChannelUsers(
+          nats,
           data.platform,
           data.instance,
           data.channel,
-          nats
+          { metrics, producer: 'seen' }
         );
         log.debug('Retrieved user list from IRC connector', {
           producer: 'seen',
