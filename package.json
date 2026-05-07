@@ -11,7 +11,7 @@
     "update-libraries": "ncu -u @eeveebot/libeevee undici && npm install"
   },
   "dependencies": {
-    "@eeveebot/libeevee": "^4.0.0",
+    "@eeveebot/libeevee": "^4.0.1",
     "better-sqlite3": "^12.8.0"
   },
   "devDependencies": {
