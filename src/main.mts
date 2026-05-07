@@ -4,11 +4,26 @@
 // Tracks when users were last seen and provides commands to check
 
 import fs from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import yaml from 'js-yaml';
-import { NatsClient, log } from '@eeveebot/libeevee';
+import {
+  NatsClient,
+  log,
+  createNatsConnection,
+  registerGracefulShutdown,
+  createModuleMetrics,
+  loadModuleConfig,
+  RateLimitConfig,
+  defaultRateLimit,
+  registerCommand,
+  sendChatMessage,
+  registerHelp,
+  HelpEntry,
+  registerStatsHandlers,
+  queryChannelUsers,
+} from '@eeveebot/libeevee';
 import Database from 'better-sqlite3';
 import { colorizeSeen } from './utils/colorize.mjs';
+
+const metrics = createModuleMetrics('seen');
 
 // Record module startup time for uptime tracking
 const moduleStartTime = Date.now();
@@ -25,14 +40,6 @@ const lurkersCommandDisplayName = 'lurkers';
 const seenBroadcastUUID = 'd3a0ee0a-32e3-4613-bcdd-736c52e38e81';
 const seenBroadcastDisplayName = 'seen';
 
-// Rate limit configuration interface
-interface RateLimitConfig {
-  mode: 'enqueue' | 'drop';
-  level: 'channel' | 'user' | 'global';
-  limit: number;
-  interval: string; // e.g., "30s", "1m", "5m"
-}
-
 // Seen module configuration interface
 interface SeenConfig {
   ratelimit?: RateLimitConfig;
@@ -45,88 +52,20 @@ const natsSubscriptions: Array<Promise<string | boolean>> = [];
 // Database instance
 let db: Database.Database | null = null;
 
-/**
- * Load seen configuration from YAML file
- * @returns SeenConfig parsed from YAML file
- */
-function loadSeenConfig(): SeenConfig {
-  // Get the config file path from environment variable
-  const configPath = process.env.MODULE_CONFIG_PATH;
-  if (!configPath) {
-    log.warn('MODULE_CONFIG_PATH not set, using default config', {
-      producer: 'seen',
-    });
-    return {};
-  }
-
-  try {
-    // Read the YAML file
-    const configFile = fs.readFileSync(configPath, 'utf8');
-
-    // Parse the YAML content
-    const config = yaml.load(configFile) as SeenConfig;
-
-    log.info('Loaded seen configuration', {
-      producer: 'seen',
-      configPath,
-    });
-
-    return config;
-  } catch (error) {
-    log.error('Failed to load seen configuration, using defaults', {
-      producer: 'seen',
-      configPath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return {};
-  }
-}
-
 //
 // Do whatever teardown is necessary before calling common handler
-process.on('SIGINT', () => {
-  if (db) {
-    db.close();
-  }
-  natsClients.forEach((natsClient) => {
-    void natsClient.drain();
-  });
-});
-
-process.on('SIGTERM', () => {
-  if (db) {
-    db.close();
-  }
-  natsClients.forEach((natsClient) => {
-    void natsClient.drain();
-  });
+registerGracefulShutdown(natsClients, async () => {
+  if (db) db.close();
 });
 
 //
 // Setup NATS connection
 
-// Get host and token
-const natsHost = process.env.NATS_HOST || false;
-if (!natsHost) {
-  const msg = 'environment variable NATS_HOST is not set.';
-  throw new Error(msg);
-}
-
-const natsToken = process.env.NATS_TOKEN || false;
-if (!natsToken) {
-  const msg = 'environment variable NATS_TOKEN is not set.';
-  throw new Error(msg);
-}
-
-const nats = new NatsClient({
-  natsHost: natsHost as string,
-  natsToken: natsToken as string,
-});
+const nats = await createNatsConnection();
 natsClients.push(nats);
-await nats.connect();
 
 // Load configuration at startup
-const seenConfig = loadSeenConfig();
+const seenConfig = loadModuleConfig<SeenConfig>({});
 
 // Initialize database
 function initDatabase(): void {
@@ -193,131 +132,11 @@ const findUsersSinceStmt = db!.prepare(`
   SELECT DISTINCT nick FROM seen_users WHERE date >= @sinceTime
 `);
 
-// Function to register the seen command with the router
-async function registerSeenCommand(): Promise<void> {
-  // Default rate limit configuration
-  const defaultRateLimit = {
-    mode: 'drop',
-    level: 'user',
-    limit: 5,
-    interval: '1m',
-  };
+// (seen command registration now handled by registerCommand helper below)
 
-  // Use configured rate limit or default
-  const rateLimitConfig = seenConfig.ratelimit || defaultRateLimit;
+// (since command registration now handled by registerCommand helper below)
 
-  const commandRegistration = {
-    type: 'command.register',
-    commandUUID: seenCommandUUID,
-    commandDisplayName: seenCommandDisplayName,
-    platform: '.*', // Match all platforms
-    network: '.*', // Match all networks
-    instance: '.*', // Match all instances
-    channel: '.*', // Match all channels
-    user: '.*', // Match all users
-    nick: '.*', // Match all nicks
-    regex: '^seen\\s+', // Match seen followed by whitespace
-    platformPrefixAllowed: true,
-    ratelimit: rateLimitConfig,
-  };
-
-  try {
-    await nats.publish('command.register', JSON.stringify(commandRegistration));
-    log.info('Registered seen command with router', {
-      producer: 'seen',
-      ratelimit: rateLimitConfig,
-    });
-  } catch (error) {
-    log.error('Failed to register seen command', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-}
-
-// Function to register the since command with the router
-async function registerSinceCommand(): Promise<void> {
-  // Default rate limit configuration
-  const defaultRateLimit = {
-    mode: 'drop',
-    level: 'user',
-    limit: 5,
-    interval: '1m',
-  };
-
-  // Use configured rate limit or default
-  const rateLimitConfig = seenConfig.ratelimit || defaultRateLimit;
-
-  const commandRegistration = {
-    type: 'command.register',
-    commandUUID: sinceCommandUUID,
-    commandDisplayName: sinceCommandDisplayName,
-    platform: '.*', // Match all platforms
-    network: '.*', // Match all networks
-    instance: '.*', // Match all instances
-    channel: '.*', // Match all channels
-    user: '.*', // Match all users
-    nick: '.*', // Match all nicks
-    regex: '^since\\s+', // Match since followed by whitespace
-    platformPrefixAllowed: true,
-    ratelimit: rateLimitConfig,
-  };
-
-  try {
-    await nats.publish('command.register', JSON.stringify(commandRegistration));
-    log.info('Registered since command with router', {
-      producer: 'seen',
-      ratelimit: rateLimitConfig,
-    });
-  } catch (error) {
-    log.error('Failed to register since command', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-}
-
-// Function to register the lurkers command with the router
-async function registerLurkersCommand(): Promise<void> {
-  // Default rate limit configuration
-  const defaultRateLimit = {
-    mode: 'drop',
-    level: 'user',
-    limit: 10,
-    interval: '1m',
-  };
-
-  // Use configured rate limit or default
-  const rateLimitConfig = seenConfig.ratelimit || defaultRateLimit;
-
-  const commandRegistration = {
-    type: 'command.register',
-    commandUUID: lurkersCommandUUID,
-    commandDisplayName: lurkersCommandDisplayName,
-    platform: '.*', // Match all platforms
-    network: '.*', // Match all networks
-    instance: '.*', // Match all instances
-    channel: '.*', // Match all channels
-    user: '.*', // Match all users
-    nick: '.*', // Match all nicks
-    regex: '^lurkers\\s*', // Match lurkers command
-    platformPrefixAllowed: true,
-    ratelimit: rateLimitConfig,
-  };
-
-  try {
-    await nats.publish('command.register', JSON.stringify(commandRegistration));
-    log.info('Registered lurkers command with router', {
-      producer: 'seen',
-      ratelimit: rateLimitConfig,
-    });
-  } catch (error) {
-    log.error('Failed to register lurkers command', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-}
+// (lurkers command registration now handled by registerCommand helper below)
 
 // Function to register the seen broadcast with the router
 async function registerSeenBroadcast(): Promise<void> {
@@ -354,10 +173,30 @@ async function registerSeenBroadcast(): Promise<void> {
 // Register broadcast at startup
 await registerSeenBroadcast();
 
-// Register commands at startup
-await registerSeenCommand();
-await registerSinceCommand();
-await registerLurkersCommand();
+// Register commands at startup using registerCommand helper
+const seenCommandSubs = await registerCommand(nats, {
+  commandUUID: seenCommandUUID,
+  commandDisplayName: seenCommandDisplayName,
+  regex: '^seen\\s+',
+  ratelimit: seenConfig.ratelimit || defaultRateLimit,
+}, metrics);
+natsSubscriptions.push(...seenCommandSubs);
+
+const sinceCommandSubs = await registerCommand(nats, {
+  commandUUID: sinceCommandUUID,
+  commandDisplayName: sinceCommandDisplayName,
+  regex: '^since\\s+',
+  ratelimit: seenConfig.ratelimit || defaultRateLimit,
+}, metrics);
+natsSubscriptions.push(...sinceCommandSubs);
+
+const lurkersCommandSubs = await registerCommand(nats, {
+  commandUUID: lurkersCommandUUID,
+  commandDisplayName: lurkersCommandDisplayName,
+  regex: '^lurkers\\s*',
+  ratelimit: seenConfig.ratelimit || defaultRateLimit,
+}, metrics);
+natsSubscriptions.push(...lurkersCommandSubs);
 
 // Subscribe to seen command execution messages
 const seenCommandSub = nats.subscribe(
@@ -383,18 +222,7 @@ const seenCommandSub = nats.subscribe(
           data.platform,
           'warning'
         );
-        const errorMsg = {
-          channel: data.channel,
-          network: data.network,
-          instance: data.instance,
-          platform: data.platform,
-          text: `${userText}: ${usageText}`,
-          trace: data.trace,
-          type: 'message.outgoing',
-        };
-
-        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-        void nats.publish(outgoingTopic, JSON.stringify(errorMsg));
+        void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: ${usageText}`, trace: data.trace }, metrics);
         return;
       }
 
@@ -426,18 +254,7 @@ const seenCommandSub = nats.subscribe(
           'info'
         );
 
-        const response = {
-          channel: data.channel,
-          network: data.network,
-          instance: data.instance,
-          platform: data.platform,
-          text: `${userText}: ${responseText}`,
-          trace: data.trace,
-          type: 'message.outgoing',
-        };
-
-        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-        void nats.publish(outgoingTopic, JSON.stringify(response));
+        void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: ${responseText}`, trace: data.trace }, metrics);
         return;
       }
 
@@ -474,18 +291,7 @@ const seenCommandSub = nats.subscribe(
       );
       const actionText = colorizeSeen(userData.text, data.platform, 'action');
 
-      const response = {
-        channel: data.channel,
-        network: data.network,
-        instance: data.instance,
-        platform: data.platform,
-        text: `${userText}: [${targetUserText}] [${dateTimeText}] [${actionText}]`,
-        trace: data.trace,
-        type: 'message.outgoing',
-      };
-
-      const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-      void nats.publish(outgoingTopic, JSON.stringify(response));
+      void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: [${targetUserText}] [${dateTimeText}] [${actionText}]`, trace: data.trace }, metrics);
     } catch (error) {
       log.error('Failed to process seen command', {
         producer: 'seen',
@@ -521,18 +327,7 @@ const sinceCommandSub = nats.subscribe(
           data.platform,
           'warning'
         );
-        const errorMsg = {
-          channel: data.channel,
-          network: data.network,
-          instance: data.instance,
-          platform: data.platform,
-          text: `${userText}: ${usageText}`,
-          trace: data.trace,
-          type: 'message.outgoing',
-        };
-
-        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-        void nats.publish(outgoingTopic, JSON.stringify(errorMsg));
+        void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: ${usageText}`, trace: data.trace }, metrics);
         return;
       }
 
@@ -544,18 +339,7 @@ const sinceCommandSub = nats.subscribe(
           data.platform,
           'warning'
         );
-        const errorMsg = {
-          channel: data.channel,
-          network: data.network,
-          instance: data.instance,
-          platform: data.platform,
-          text: `${userText}: ${errorText}`,
-          trace: data.trace,
-          type: 'message.outgoing',
-        };
-
-        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-        void nats.publish(outgoingTopic, JSON.stringify(errorMsg));
+        void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: ${errorText}`, trace: data.trace }, metrics);
         return;
       }
 
@@ -598,18 +382,7 @@ const sinceCommandSub = nats.subscribe(
         responseText = `${userText}: ${infoText} ${userList}`;
       }
 
-      const response = {
-        channel: data.channel,
-        network: data.network,
-        instance: data.instance,
-        platform: data.platform,
-        text: responseText,
-        trace: data.trace,
-        type: 'message.outgoing',
-      };
-
-      const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-      void nats.publish(outgoingTopic, JSON.stringify(response));
+      void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: responseText, trace: data.trace }, metrics);
     } catch (error) {
       log.error('Failed to process since command', {
         producer: 'seen',
@@ -621,97 +394,7 @@ const sinceCommandSub = nats.subscribe(
 natsSubscriptions.push(sinceCommandSub);
 
 // Global map to store pending user list requests for lurkers command
-const pendingUserRequests = new Map<
-  string,
-  {
-    resolve: (
-      users: Array<{
-        nick: string;
-        ident: string;
-        hostname: string;
-        modes: string[];
-      }>
-    ) => void;
-    reject: (error: Error) => void;
-    timeout: NodeJS.Timeout;
-  }
->();
-
-// Helper function to get users in a channel by querying the IRC connector
-async function getUsersInChannel(
-  platform: string,
-  instance: string,
-  channel: string,
-  nats: InstanceType<typeof NatsClient>
-): Promise<
-  Array<{ nick: string; ident: string; hostname: string; modes: string[] }>
-> {
-  return new Promise((resolve, reject) => {
-    // Generate a unique reply channel
-    const replyChannel = `seen.userlist.reply.${randomUUID()}`;
-
-    // Set up timeout
-    const timeout = setTimeout(() => {
-      // Clean up the pending request
-      pendingUserRequests.delete(replyChannel);
-
-      reject(new Error('Timeout waiting for user list'));
-    }, 5000); // 5 second timeout
-
-    // Store the promise resolver
-    pendingUserRequests.set(replyChannel, { resolve, reject, timeout });
-
-    // Subscribe to the reply channel
-    void nats
-      .subscribe(replyChannel, (subject, message) => {
-        try {
-          // Clean up the pending request
-          const request = pendingUserRequests.get(replyChannel);
-          if (request) {
-            clearTimeout(request.timeout);
-            pendingUserRequests.delete(replyChannel);
-          }
-
-          // Parse the response
-          const response = JSON.parse(message.string());
-
-          // Check if there was an error
-          if (response.error) {
-            reject(new Error(response.error));
-            return;
-          }
-
-          // Return full user objects with hostmask information
-          resolve(response.users);
-        } catch (error) {
-          log.error('Failed to process user list response', {
-            producer: 'seen',
-            error: error instanceof Error ? error.message : String(error),
-          });
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      })
-      .catch((error) => {
-        log.error('Failed to subscribe to user list reply channel', {
-          producer: 'seen',
-          error: error instanceof Error ? error.message : String(error),
-        });
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
-
-    // Send the control command to the IRC connector
-    const controlMessage = {
-      action: 'list-users-in-channel',
-      data: {
-        channel: channel,
-        replyChannel: replyChannel,
-      },
-    };
-
-    const controlTopic = `control.chatConnectors.${platform}.${instance}`;
-    void nats.publish(controlTopic, JSON.stringify(controlMessage));
-  });
-}
+// getUsersInChannel is now provided by libeevee as queryChannelUsers
 
 // Subscribe to lurkers command execution messages
 const lurkersCommandSub = nats.subscribe(
@@ -783,18 +466,7 @@ const lurkersCommandSub = nats.subscribe(
           data.platform,
           'warning'
         );
-        const errorMsg = {
-          channel: data.channel,
-          network: data.network,
-          instance: data.instance,
-          platform: data.platform,
-          text: `${userText}: ${errorText}`,
-          trace: data.trace,
-          type: 'message.outgoing',
-        };
-
-        const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-        void nats.publish(outgoingTopic, JSON.stringify(errorMsg));
+        void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: `${userText}: ${errorText}`, trace: data.trace }, metrics);
         return;
       }
 
@@ -943,18 +615,7 @@ const lurkersCommandSub = nats.subscribe(
         responseText = `${userText}: ${infoText} ${lurkerList}`;
       }
 
-      const response = {
-        channel: data.channel,
-        network: data.network,
-        instance: data.instance,
-        platform: data.platform,
-        text: responseText,
-        trace: data.trace,
-        type: 'message.outgoing',
-      };
-
-      const outgoingTopic = `chat.message.outgoing.${data.platform}.${data.instance}.${data.channel}`;
-      void nats.publish(outgoingTopic, JSON.stringify(response));
+      void sendChatMessage(nats, { channel: data.channel, network: data.network, instance: data.instance, platform: data.platform, text: responseText, trace: data.trace }, metrics);
     } catch (error) {
       log.error('Failed to process lurkers command', {
         producer: 'seen',
@@ -1002,62 +663,7 @@ const seenBroadcastSub = nats.subscribe(
 );
 natsSubscriptions.push(seenBroadcastSub);
 
-// Subscribe to control messages for re-registering commands
-const controlSubRegisterCommandSeen = nats.subscribe(
-  `control.registerCommands.${seenCommandDisplayName}`,
-  () => {
-    log.info(
-      `Received control.registerCommands.${seenCommandDisplayName} control message`,
-      {
-        producer: 'seen',
-      }
-    );
-    void registerSeenCommand();
-  }
-);
-natsSubscriptions.push(controlSubRegisterCommandSeen);
-
-const controlSubRegisterCommandSince = nats.subscribe(
-  `control.registerCommands.${sinceCommandDisplayName}`,
-  () => {
-    log.info(
-      `Received control.registerCommands.${sinceCommandDisplayName} control message`,
-      {
-        producer: 'seen',
-      }
-    );
-    void registerSinceCommand();
-  }
-);
-natsSubscriptions.push(controlSubRegisterCommandSince);
-
-const controlSubRegisterCommandAll = nats.subscribe(
-  'control.registerCommands',
-  () => {
-    log.info('Received control.registerCommands control message', {
-      producer: 'seen',
-    });
-    void registerSeenCommand();
-    void registerSinceCommand();
-    void registerLurkersCommand();
-  }
-);
-natsSubscriptions.push(controlSubRegisterCommandAll);
-
-// Subscribe to control messages for re-registering lurkers command
-const controlSubRegisterCommandLurkers = nats.subscribe(
-  `control.registerCommands.${lurkersCommandDisplayName}`,
-  () => {
-    log.info(
-      `Received control.registerCommands.${lurkersCommandDisplayName} control message`,
-      {
-        producer: 'seen',
-      }
-    );
-    void registerLurkersCommand();
-  }
-);
-natsSubscriptions.push(controlSubRegisterCommandLurkers);
+// (control.registerCommands subscriptions are now handled by registerCommand helper)
 
 // Subscribe to control messages for re-registering broadcasts
 const controlSubRegisterBroadcastSeen = nats.subscribe(
@@ -1085,39 +691,12 @@ const controlSubRegisterBroadcastAll = nats.subscribe(
 );
 natsSubscriptions.push(controlSubRegisterBroadcastAll);
 
-// Subscribe to stats.uptime messages and respond with module uptime
-const statsUptimeSub = nats.subscribe('stats.uptime', (subject, message) => {
-  try {
-    const data = JSON.parse(message.string());
-    log.info('Received stats.uptime request', {
-      producer: 'seen',
-      replyChannel: data.replyChannel,
-    });
-
-    // Calculate uptime in milliseconds
-    const uptime = Date.now() - moduleStartTime;
-
-    // Send uptime back via the ephemeral reply channel
-    const uptimeResponse = {
-      module: 'seen',
-      uptime: uptime,
-      uptimeFormatted: `${Math.floor(uptime / 86400000)}d ${Math.floor((uptime % 86400000) / 3600000)}h ${Math.floor((uptime % 3600000) / 60000)}m ${Math.floor((uptime % 60000) / 1000)}s`,
-    };
-
-    if (data.replyChannel) {
-      void nats.publish(data.replyChannel, JSON.stringify(uptimeResponse));
-    }
-  } catch (error) {
-    log.error('Failed to process stats.uptime request', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-});
-natsSubscriptions.push(statsUptimeSub);
+// Subscribe to stats.uptime and stats.emit.request
+const statsSubs = registerStatsHandlers({ nats, moduleName: 'seen', startTime: moduleStartTime, metrics });
+natsSubscriptions.push(...statsSubs);
 
 // Help information for seen commands
-const seenHelp = [
+const seenHelp: HelpEntry[] = [
   {
     command: 'seen',
     descr: 'Show when a user was last seen',
@@ -1158,34 +737,6 @@ const seenHelp = [
   },
 ];
 
-// Function to publish help information
-async function publishHelp(): Promise<void> {
-  const helpUpdate = {
-    from: 'seen',
-    help: seenHelp,
-  };
-
-  try {
-    await nats.publish('help.update', JSON.stringify(helpUpdate));
-    log.info('Published seen help information', {
-      producer: 'seen',
-    });
-  } catch (error) {
-    log.error('Failed to publish seen help information', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-}
-
-// Publish help information at startup
-await publishHelp();
-
-// Subscribe to help update requests
-const helpUpdateRequestSub = nats.subscribe('help.updateRequest', () => {
-  log.info('Received help.updateRequest message', {
-    producer: 'seen',
-  });
-  void publishHelp();
-});
-natsSubscriptions.push(helpUpdateRequestSub);
+// Register help information using registerHelp helper
+const helpSubs = await registerHelp(nats, 'seen', seenHelp, metrics);
+natsSubscriptions.push(...helpSubs);
