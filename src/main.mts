@@ -18,6 +18,7 @@ import {
   registerHelp,
   HelpEntry,
   registerStatsHandlers,
+  queryChannelUsers,
 } from '@eeveebot/libeevee';
 import Database from 'better-sqlite3';
 import { colorizeSeen } from './utils/colorize.mjs';
