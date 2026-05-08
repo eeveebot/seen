@@ -18,6 +18,7 @@ import {
   registerHelp,
   HelpEntry,
   registerStatsHandlers,
+  registerBroadcast,
   queryChannelUsers,
   queryUserModes,
   initializeSystemMetrics,
@@ -154,40 +155,12 @@ const findUsersSinceStmt = db!.prepare(`
 
 // (lurkers command registration now handled by registerCommand helper below)
 
-// Function to register the seen broadcast with the router
-async function registerSeenBroadcast(): Promise<void> {
-  const broadcastRegistration = {
-    type: 'broadcast.register',
-    broadcastUUID: seenBroadcastUUID,
-    broadcastDisplayName: seenBroadcastDisplayName,
-    platform: '.*', // Match all platforms
-    network: '.*', // Match all networks
-    instance: '.*', // Match all instances
-    channel: '.*', // Match all channels
-    user: '.*', // Match all users
-    nick: '.*', // Match all nicks
-    messageFilterRegex: '.*', // Match all messages
-    ttl: 120000, // 2 minutes TTL
-  };
-
-  try {
-    await nats.publish(
-      'broadcast.register',
-      JSON.stringify(broadcastRegistration)
-    );
-    log.info('Registered seen broadcast with router', {
-      producer: 'seen',
-    });
-  } catch (error) {
-    log.error('Failed to register seen broadcast', {
-      producer: 'seen',
-      error: error,
-    });
-  }
-}
-
-// Register broadcast at startup
-await registerSeenBroadcast();
+// Register broadcast at startup using registerBroadcast helper
+const seenBroadcastSubs = await registerBroadcast(nats, {
+  broadcastUUID: seenBroadcastUUID,
+  broadcastDisplayName: seenBroadcastDisplayName,
+}, metrics);
+natsSubscriptions.push(...seenBroadcastSubs);
 
 // Register commands at startup using registerCommand helper
 const seenCommandSubs = await registerCommand(nats, {
@@ -941,32 +914,7 @@ const seenBroadcastSub = nats.subscribe(
 natsSubscriptions.push(seenBroadcastSub);
 
 // (control.registerCommands subscriptions are now handled by registerCommand helper)
-
-// Subscribe to control messages for re-registering broadcasts
-const controlSubRegisterBroadcastSeen = nats.subscribe(
-  `control.registerBroadcasts.${seenBroadcastDisplayName}`,
-  () => {
-    log.info(
-      `Received control.registerBroadcasts.${seenBroadcastDisplayName} control message`,
-      {
-        producer: 'seen',
-      }
-    );
-    void registerSeenBroadcast();
-  }
-);
-natsSubscriptions.push(controlSubRegisterBroadcastSeen);
-
-const controlSubRegisterBroadcastAll = nats.subscribe(
-  'control.registerBroadcasts',
-  () => {
-    log.info('Received control.registerBroadcasts control message', {
-      producer: 'seen',
-    });
-    void registerSeenBroadcast();
-  }
-);
-natsSubscriptions.push(controlSubRegisterBroadcastAll);
+// (control.registerBroadcasts subscriptions are now handled by registerBroadcast helper)
 
 // Subscribe to stats.uptime and stats.emit.request
 const statsSubs = registerStatsHandlers({ nats, moduleName: 'seen', startTime: moduleStartTime, metrics });
