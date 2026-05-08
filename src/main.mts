@@ -19,6 +19,8 @@ import {
   HelpEntry,
   registerStatsHandlers,
   queryChannelUsers,
+  initializeSystemMetrics,
+  setupHttpServer,
 } from '@eeveebot/libeevee';
 import Database from 'better-sqlite3';
 import { colorizeSeen } from './utils/colorize.mjs';
@@ -48,6 +50,16 @@ interface SeenConfig {
 
 const natsClients: InstanceType<typeof NatsClient>[] = [];
 const natsSubscriptions: Array<Promise<string | boolean>> = [];
+
+// Initialize system metrics
+initializeSystemMetrics('seen');
+
+// Setup HTTP server for metrics and health checks
+setupHttpServer({
+  port: process.env.HTTP_API_PORT || '9000',
+  serviceName: 'seen',
+  natsClients: natsClients,
+});
 
 // Database instance
 let db: Database.Database | null = null;
