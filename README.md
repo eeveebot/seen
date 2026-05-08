@@ -15,7 +15,7 @@ The module registers a broadcast with the router to receive all messages, then u
 - **Passive tracking** — Records every user message across all platforms, networks, and channels automatically
 - **Multi-platform** — Stores activity keyed by platform, network, instance, and channel
 - **IRC colorization** — Semantic color coding for nicknames, timestamps, and actions on IRC platforms
-- **Three query commands** — `seen`, `since`, and `lurkers` for different views of activity data
+- **Three query commands** — `seen`, `since`, `lurkers`, and `lurkers-report` for different views of activity data
 - **Rate limited** — All commands respect configurable rate limits via libeevee defaults
 - **Graceful shutdown** — Closes the SQLite database cleanly on termination
 - **Migration support** — Includes a script to migrate from the old single-platform schema
@@ -116,6 +116,37 @@ alice: Top 10 lurkers not seen in the last 30 days (currently in channel): bob (
 ```
 
 Users who are in the channel but have no record at all are shown as `(never)`.
+
+### `lurkers-report [days]`
+
+Comprehensive lurkers report — **admin only**. Unlike `lurkers`, this command shows *all* channel users (active, inactive, and never seen) and delivers the full report via private message, keeping the channel clean.
+
+| Parameter | Default | Max | Description |
+|-----------|---------|-----|-------------|
+| `days` | 30 | 365 | How far back to look for last activity |
+
+**Requirements:**
+- You must be a channel admin (have `+o` mode) to run this command.
+- The report is sent via private message — only you see it.
+
+**Examples:**
+
+```
+> lurkers-report                 # Full report with 30-day window
+> lurkers-report 7              # Full report with 7-day window
+```
+
+**Example output (via private message):**
+
+```
+=== Lurkers Report for #channel (30 day window) ===
+Active users (seen within 30 days): alice (today), bob (5d ago), carol (today)
+Inactive users (not seen in 30 days): dave (45d ago), eve (62d ago)
+Never seen: frank, greg
+Total: 7 users (3 active, 2 inactive, 2 never seen)
+```
+
+The channel receives a brief confirmation: `alice: Lurkers report sent via private message.`
 
 ## Architecture
 
