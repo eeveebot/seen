@@ -209,7 +209,7 @@ natsSubscriptions.push(...sinceCommandSubs);
 const lurkersCommandSubs = await registerCommand(nats, {
   commandUUID: lurkersCommandUUID,
   commandDisplayName: lurkersCommandDisplayName,
-  regex: '^lurkers\\s*',
+  regex: '^lurkers(?!-)\\s*',
   ratelimit: seenConfig.ratelimit || defaultRateLimit,
 }, metrics);
 natsSubscriptions.push(...lurkersCommandSubs);
