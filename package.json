@@ -1,13 +1,13 @@
 {
   "name": "@eeveebot/seen",
-  "version": "1.5.5",
+  "version": "1.6.0",
   "description": "seen module for eevee.bot",
   "main": "dist/main.mjs",
   "type": "module",
   "scripts": {
-    "build": "npm run test && tsc",
+    "build": "npm run test && npx tsc",
     "dev": "tsc --watch & node --loader ts-node/esm src/main.mts",
-    "test": "eslint src/",
+    "test": "npx eslint src/",
     "update-libraries": "ncu -u @eeveebot/libeevee undici && npm install"
   },
   "dependencies": {
@@ -18,10 +18,12 @@
     "@eslint/eslintrc": "^3.3.5",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.37",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
     "eslint": "^8.57.1",
     "globals": "^17.4.0",
+    "prettier": "^3.5.3",
     "typescript": "^5.9.3"
   },
   "engines": {
