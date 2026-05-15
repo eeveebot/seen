@@ -46,7 +46,7 @@ export async function handleLurkersReportCommand({
             data.platform,
             data.instance,
             data.channel,
-            data.user,
+            data.nick,
             { metrics, producer: 'seen' }
           );
           isAdmin = userModes.isChannelAdmin;
@@ -55,7 +55,7 @@ export async function handleLurkersReportCommand({
             producer: 'seen',
             error: error instanceof Error ? error.message : String(error),
           });
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'Unable to verify admin status. Please try again later.',
             data.platform,
@@ -66,7 +66,7 @@ export async function handleLurkersReportCommand({
         }
 
         if (!isAdmin) {
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'You must be a channel admin to use this command',
             data.platform,
@@ -102,7 +102,7 @@ export async function handleLurkersReportCommand({
             channel: data.channel,
             error: error instanceof Error ? error.message : String(error),
           });
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'Failed to retrieve user list from IRC connector',
             data.platform,
@@ -141,7 +141,7 @@ export async function handleLurkersReportCommand({
             producer: 'seen',
             error: error instanceof Error ? error.message : String(error),
           });
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'Failed to query seen database',
             data.platform,
@@ -229,7 +229,7 @@ export async function handleLurkersReportCommand({
         let currentBatch = '';
         const sendBatch = async (text: string) => {
           await sendChatMessage(nats, {
-            channel: data.user, // nick as target = PM in IRC
+            channel: data.nick, // nick as target = PM in IRC
             network: data.network,
             instance: data.instance,
             platform: data.platform,
@@ -251,7 +251,7 @@ export async function handleLurkersReportCommand({
         }
 
         // Send brief confirmation to the channel
-        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const userText = colorizeSeen(data.nick, data.platform, 'user');
         const confirmText = colorizeSeen(
           'Lurkers report sent via private message.',
           data.platform,

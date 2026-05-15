@@ -32,7 +32,7 @@ export async function handleSinceCommand({
         // Parse the command: since <minutes>
         const parts = data.text.trim().split(/\s+/);
         if (parts.length < 1) {
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const usageText = colorizeSeen(
             'Usage: since <minutes>',
             data.platform,
@@ -44,7 +44,7 @@ export async function handleSinceCommand({
 
         const minutes = parseInt(parts[0]);
         if (isNaN(minutes)) {
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'Please provide a valid number of minutes',
             data.platform,
@@ -64,7 +64,7 @@ export async function handleSinceCommand({
         const users = findUsersSince(sinceTime);
 
         // Colorize the response
-        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const userText = colorizeSeen(data.nick, data.platform, 'user');
         let responseText = '';
 
         if (users.length === 0) {

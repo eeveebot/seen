@@ -32,7 +32,7 @@ export async function handleSeenCommand({
         // Parse the command: seen <username>
         const parts = data.text.trim().split(/\s+/);
         if (parts.length < 1) {
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const usageText = colorizeSeen(
             'Usage: seen <username>',
             data.platform,
@@ -56,7 +56,7 @@ export async function handleSeenCommand({
         });
 
         if (!userData) {
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const targetUserText = colorizeSeen(
             targetUser,
             data.platform,
@@ -96,7 +96,7 @@ export async function handleSeenCommand({
         const displayTime = date.toISOString().substring(11, 16);
 
         // Colorize different parts of the response
-        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const userText = colorizeSeen(data.nick, data.platform, 'user');
         const targetUserText = colorizeSeen(targetUser, data.platform, 'user');
         const dateTimeText = colorizeSeen(
           `${displayDate} ${displayTime}`,

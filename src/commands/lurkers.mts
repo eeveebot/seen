@@ -79,7 +79,7 @@ export async function handleLurkersCommand({
             channel: data.channel,
             error: error instanceof Error ? error.message : String(error),
           });
-          const userText = colorizeSeen(data.user, data.platform, 'user');
+          const userText = colorizeSeen(data.nick, data.platform, 'user');
           const errorText = colorizeSeen(
             'Failed to retrieve user list from IRC connector',
             data.platform,
@@ -192,7 +192,7 @@ export async function handleLurkersCommand({
         const lurkersInChannel = [...oldUsers, ...unseenUsers];
 
         // Colorize the response
-        const userText = colorizeSeen(data.user, data.platform, 'user');
+        const userText = colorizeSeen(data.nick, data.platform, 'user');
         let responseText = '';
 
         if (lurkersInChannel.length === 0) {
