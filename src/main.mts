@@ -10,10 +10,8 @@ import {
   registerGracefulShutdown,
   createModuleMetrics,
   loadModuleConfig,
-  RateLimitConfig,
   defaultRateLimit,
   registerCommand,
-  sendChatMessage,
   registerHelp,
   HelpEntry,
   registerStatsHandlers,
@@ -28,8 +26,6 @@ import { handleSeenCommand } from './commands/seen.mjs';
 import { handleSinceCommand } from './commands/since.mjs';
 import { handleLurkersCommand } from './commands/lurkers.mjs';
 import { handleLurkersReportCommand } from './commands/lurkers-report.mjs';
-import { colorizeSeen } from './utils/colorize.mjs';
-
 const metrics = createModuleMetrics('seen');
 
 // Record module startup time for uptime tracking
