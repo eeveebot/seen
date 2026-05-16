@@ -31,7 +31,7 @@ const metrics = createModuleMetrics('seen');
 
 // Record module startup time for uptime tracking
 const moduleStartTime = Date.now();
-const moduleVersion = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
+const moduleVersion = JSON.parse(fs.readFileSync(new URL('package.json', 'file://' + process.cwd() + '/'), 'utf8')).version as string;
 
 const seenCommandUUID = '6ea5d8c9-17e7-4348-b205-43d88ddfe0bf';
 const seenCommandDisplayName = 'seen';
