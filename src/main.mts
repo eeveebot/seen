@@ -26,10 +26,12 @@ import { handleSeenCommand } from './commands/seen.mjs';
 import { handleSinceCommand } from './commands/since.mjs';
 import { handleLurkersCommand } from './commands/lurkers.mjs';
 import { handleLurkersReportCommand } from './commands/lurkers-report.mjs';
+import fs from 'node:fs';
 const metrics = createModuleMetrics('seen');
 
 // Record module startup time for uptime tracking
 const moduleStartTime = Date.now();
+const moduleVersion = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
 
 const seenCommandUUID = '6ea5d8c9-17e7-4348-b205-43d88ddfe0bf';
 const seenCommandDisplayName = 'seen';
@@ -160,7 +162,7 @@ natsSubscriptions.push(seenBroadcastSub);
 // (control.registerBroadcasts subscriptions are now handled by registerBroadcast helper)
 
 // Subscribe to stats.uptime and stats.emit.request
-const statsSubs = registerStatsHandlers({ nats, moduleName: 'seen', startTime: moduleStartTime, metrics });
+const statsSubs = registerStatsHandlers({ nats, moduleName: 'seen', startTime: moduleStartTime, version: moduleVersion, metrics });
 natsSubscriptions.push(...statsSubs);
 
 // Help information for seen commands
