@@ -15,7 +15,8 @@ The module registers a broadcast with the router to receive all messages, then u
 - **Passive tracking** — Records every user message across all platforms, networks, and channels automatically
 - **Multi-platform** — Stores activity keyed by platform, network, instance, and channel
 - **IRC colorization** — Semantic color coding for nicknames, timestamps, and actions on IRC platforms
-- **Three query commands** — `seen`, `since`, `lurkers`, and `lurkers-report` for different views of activity data
+- **Departure tracking** — Records when users leave channels (part/quit/kick) with their last message snapshot
+- **Five query commands** — `seen`, `since`, `lurkers`, `lurkers-report`, and `lastwords` for different views of activity data
 - **Rate limited** — All commands respect configurable rate limits via libeevee defaults
 - **Graceful shutdown** — Closes the SQLite database cleanly on termination
 - **Migration support** — Includes a script to migrate from the old single-platform schema
@@ -148,6 +149,40 @@ Total: 7 users (3 active, 2 inactive, 2 never seen)
 
 The channel receives a brief confirmation: `alice: Lurkers report sent via private message.`
 
+### `lastwords <username>`
+
+Show what a user last said before leaving a channel (part, quit, or kick). Looks up the most recent departure across all channels — not limited to the channel where the command is issued.
+
+**Example (part):**
+
+```
+> lastwords alice
+alice: [alice] Last said "brb getting oil" at 2026-08-15 22:14, parted from #eevee at 2026-08-15 22:17 (Ping timeout)
+```
+
+**Example (kick):**
+
+```
+> lastwords bender
+alice: [bender] Last said "bite my shiny metal ass" at 2026-08-15 20:03, kicked from #eevee at 2026-08-15 20:05 by coilette (too rude)
+```
+
+**Example (quit):**
+
+```
+> lastwords fry
+alice: [fry] Last said "i'm confused" at 2026-08-15 18:30, quit from #eevee at 2026-08-15 18:45 (Connection reset)
+```
+
+If no departure record exists:
+
+```
+> lastwords zoidberg
+alice: I don't have a departure record for zoidberg
+```
+
+Only users who have spoken at least once (have a `seen_users` record) get a departure entry. Lurkers who never spoke are not tracked.
+
 ## Architecture
 
 ```
@@ -175,10 +210,11 @@ The channel receives a brief confirmation: `alice: Lurkers report sent via priva
 
 ### Data Flow
 
-1. **Startup** — The module creates a NATS connection, initializes the SQLite database, and registers a broadcast with the router to receive all chat messages.
+1. **Startup** — The module creates a NATS connection, initializes the SQLite database, registers a broadcast with the router to receive all chat messages, and registers an event subscription to receive departure events (part/quit/kick).
 2. **Message tracking** — Every broadcast message triggers an upsert into the `seen_users` table, recording the nick, timestamp, message text, platform, network, instance, and channel.
-3. **Command handling** — Commands (`seen`, `since`, `lurkers`) are registered with the router. When invoked, they query the database and send a formatted response back to the channel.
-4. **Lurkers** — The `lurkers` command additionally queries the IRC connector via `queryChannelUsers()` to get the current channel membership, then cross-references with the seen database.
+3. **Departure tracking** — When a user parts, quits, or is kicked, the connector publishes an event to NATS. The router forwards it to the seen module, which looks up the user's `seen_users` record and snapshots their last message into `user_departures`. Lurkers who never spoke are skipped.
+4. **Command handling** — Commands (`seen`, `since`, `lurkers`, `lurkers-report`, `lastwords`) are registered with the router. When invoked, they query the database and send a formatted response back to the channel.
+5. **Lurkers** — The `lurkers` command additionally queries the IRC connector via `queryChannelUsers()` to get the current channel membership, then cross-references with the seen database.
 
 ### Database Schema
 
@@ -191,6 +227,21 @@ CREATE TABLE seen_users (
   network  TEXT,        -- e.g. "libera"
   instance TEXT,        -- e.g. "default"
   channel  TEXT,        -- e.g. "#general"
+  PRIMARY KEY (nick, platform, network, instance, channel)
+);
+
+CREATE TABLE user_departures (
+  nick              TEXT,
+  platform          TEXT,
+  network           TEXT,
+  instance          TEXT,
+  channel           TEXT,
+  last_message      TEXT,        -- snapshot of user's last message
+  last_message_date TEXT,        -- when the last message was sent
+  departure_date    TEXT,        -- when the departure occurred
+  departure_type    TEXT,        -- 'part', 'quit', or 'kick'
+  departure_reason  TEXT,        -- reason message (if any)
+  kicked_by         TEXT,        -- kicker's nick (kick only, NULL otherwise)
   PRIMARY KEY (nick, platform, network, instance, channel)
 );
 ```
