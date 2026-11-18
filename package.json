@@ -8,11 +8,12 @@
     "build": "npm run test && npx tsc",
     "dev": "tsc --watch & node --loader ts-node/esm src/main.mts",
     "test": "npx eslint src/",
-    "update-libraries": "ncu -u @eeveebot/libeevee undici && npm install"
+    "update-libraries": "npm install --save @eeveebot/libeevee@latest undici"
   },
   "dependencies": {
-    "@eeveebot/libeevee": "^4.3.0",
-    "better-sqlite3": "^12.8.0"
+    "@eeveebot/libeevee": "^4.4.0",
+    "better-sqlite3": "^12.8.0",
+    "undici": "^8.12.4"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
@@ -28,5 +29,9 @@
   },
   "engines": {
     "node": ">=24.0.0"
+  },
+  "license": "AGPL-3.0-or-later",
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }
